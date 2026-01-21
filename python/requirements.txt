@@ -1,0 +1,5 @@
+# UDP RTP Receiver - No external dependencies required
+# Uses only Python standard library (socket, struct, argparse, signal)
+
+# Optional: For advanced packet analysis
+# scapy>=2.5.0

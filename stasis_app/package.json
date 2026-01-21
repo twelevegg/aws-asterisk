@@ -1,0 +1,15 @@
+{
+  "name": "linphone-stasis-app",
+  "version": "1.0.0",
+  "description": "Stasis application for Linphone SIP integration with ExternalMedia",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "ari-client": "^2.2.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
