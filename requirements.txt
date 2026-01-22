@@ -1,0 +1,17 @@
+# AICC Pipeline Dependencies
+
+# Core
+numpy>=1.24.0
+websockets>=12.0
+
+# Korean NLP
+kiwipiepy>=0.16.0
+
+# Google Cloud STT
+google-cloud-speech>=2.21.0
+
+# Pipecat (optional - for advanced VAD)
+# pipecat-ai[silero]>=0.0.40
+
+# Audio processing
+pydub>=0.25.1
