@@ -1,4 +1,4 @@
 """Voice Activity Detection module."""
-from .detector import BaseVAD, EnergyVAD, SileroVAD, create_vad
+from .detector import BaseVAD, EnergyVAD, AdaptiveEnergyVAD, SileroVAD, create_vad
 
-__all__ = ["BaseVAD", "EnergyVAD", "SileroVAD", "create_vad"]
+__all__ = ["BaseVAD", "EnergyVAD", "AdaptiveEnergyVAD", "SileroVAD", "create_vad"]

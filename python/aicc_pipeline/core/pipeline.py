@@ -32,7 +32,7 @@ def _safe_task(coro, name: str = "task"):
         except Exception as e:
             logger.error(f"Async task '{name}' failed: {e}")
     return asyncio.create_task(wrapper())
-from ..vad import create_vad, BaseVAD
+from ..vad import create_vad, BaseVAD, AdaptiveEnergyVAD
 from ..stt import GoogleCloudSTT
 from ..turn import TurnDetector, TurnDecision
 from ..websocket import WebSocketManager
@@ -159,13 +159,31 @@ class SpeakerProcessor:
             self._process_vad_state(is_speech, window_bytes)
             self._current_time += window_size / self.config.target_sample_rate
 
-    def _process_vad_state(self, is_speech: bool, audio_bytes: bytes):
-        """Process VAD state and detect turns."""
-        min_silence_frames = int(
-            self.config.min_silence_ms * self.config.target_sample_rate /
-            (self._vad.window_size * 1000)
-        )
+    def _get_adaptive_silence_ms(self) -> float:
+        """
+        Get adaptive silence threshold based on speech duration.
 
+        Uses AdaptiveEnergyVAD if available, otherwise falls back to config.
+        """
+        if self._speech_start_time is None:
+            return self.config.min_silence_ms
+
+        speech_duration = self._current_time - self._speech_start_time
+
+        # Use adaptive VAD method if available
+        if isinstance(self._vad, AdaptiveEnergyVAD):
+            return self._vad.get_adaptive_silence_ms(speech_duration)
+
+        # Fallback: simple adaptive logic
+        if speech_duration < 0.5:
+            return 200.0  # Short response
+        elif speech_duration < 2.0:
+            return 300.0  # Normal utterance
+        else:
+            return self.config.min_silence_ms  # Long, use default
+
+    def _process_vad_state(self, is_speech: bool, audio_bytes: bytes):
+        """Process VAD state and detect turns with adaptive silence detection."""
         if is_speech:
             self._silence_frames = 0
 
@@ -177,6 +195,13 @@ class SpeakerProcessor:
         else:
             if self._is_speaking:
                 self._silence_frames += 1
+
+                # Use adaptive silence threshold
+                min_silence_ms = self._get_adaptive_silence_ms()
+                min_silence_frames = int(
+                    min_silence_ms * self.config.target_sample_rate /
+                    (self._vad.window_size * 1000)
+                )
 
                 if self._silence_frames >= min_silence_frames:
                     _safe_task(self._finalize_turn(), "finalize_turn")

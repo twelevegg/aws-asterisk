@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../python'))
 
-from aicc_pipeline.vad.detector import EnergyVAD, create_vad, BaseVAD
+from aicc_pipeline.vad.detector import EnergyVAD, AdaptiveEnergyVAD, create_vad, BaseVAD
 
 
 class TestEnergyVAD:
@@ -55,17 +55,91 @@ class TestEnergyVAD:
         assert self.vad.is_speech(short) is False
 
 
+class TestAdaptiveEnergyVAD:
+    """Test adaptive energy-based VAD with improved latency."""
+
+    def setup_method(self):
+        self.vad = AdaptiveEnergyVAD(threshold=500.0, sample_rate=16000)
+
+    def test_window_size(self):
+        """Test window size calculation."""
+        assert self.vad.window_size == 512
+
+    def test_adaptive_silence_short_speech(self):
+        """Test short speech gets short silence threshold."""
+        # Less than 0.5s speech
+        silence_ms = self.vad.get_adaptive_silence_ms(0.3)
+        assert silence_ms == 200.0
+
+    def test_adaptive_silence_medium_speech(self):
+        """Test medium speech gets medium silence threshold."""
+        # 0.5s to 2.0s speech
+        silence_ms = self.vad.get_adaptive_silence_ms(1.0)
+        assert silence_ms == 300.0
+
+    def test_adaptive_silence_long_speech(self):
+        """Test long speech gets long silence threshold."""
+        # Over 2.0s speech
+        silence_ms = self.vad.get_adaptive_silence_ms(3.0)
+        assert silence_ms == 400.0
+
+    def test_zero_crossing_rate(self):
+        """Test ZCR calculation."""
+        # Alternating signal has high ZCR
+        alternating = np.array([1000, -1000] * 256, dtype=np.int16).tobytes()
+        zcr = self.vad._compute_zcr(alternating)
+        assert zcr > 0.5
+
+        # Constant signal has zero ZCR
+        constant = np.full(512, 1000, dtype=np.int16).tobytes()
+        zcr_const = self.vad._compute_zcr(constant)
+        assert zcr_const < 0.1
+
+    def test_smoothing(self):
+        """Test confidence smoothing reduces jitter."""
+        # First call
+        loud = (np.ones(512) * 10000).astype(np.int16).tobytes()
+        conf1 = self.vad.get_confidence(loud)
+
+        # Second call with silence - should be smoothed
+        silence = np.zeros(512, dtype=np.int16).tobytes()
+        conf2 = self.vad.get_confidence(silence)
+
+        # Smoothed confidence should not drop to zero immediately
+        assert conf2 > 0
+
+    def test_reset(self):
+        """Test VAD state reset."""
+        loud = (np.ones(512) * 10000).astype(np.int16).tobytes()
+        self.vad.get_confidence(loud)
+
+        self.vad.reset()
+
+        assert len(self.vad._history) == 0
+
+    def test_noise_rejection(self):
+        """Test high ZCR noise is rejected."""
+        # Create noise-like signal: low energy, high ZCR
+        noise = np.array([100, -100] * 256, dtype=np.int16).tobytes()
+        assert self.vad.is_speech(noise) is False
+
+
 class TestCreateVAD:
     """Test VAD factory function."""
 
-    def test_creates_energy_vad_when_pipecat_unavailable(self):
-        """Test fallback to EnergyVAD."""
-        vad = create_vad(prefer_silero=False)
+    def test_creates_adaptive_vad_by_default(self):
+        """Test default creates AdaptiveEnergyVAD."""
+        vad = create_vad(prefer_silero=False, use_adaptive=True)
+        assert isinstance(vad, AdaptiveEnergyVAD)
+
+    def test_creates_energy_vad_when_adaptive_disabled(self):
+        """Test fallback to EnergyVAD when adaptive disabled."""
+        vad = create_vad(prefer_silero=False, use_adaptive=False)
         assert isinstance(vad, EnergyVAD)
 
     def test_threshold_scaling(self):
         """Test that threshold is scaled for EnergyVAD."""
-        vad = create_vad(threshold=0.5, prefer_silero=False)
+        vad = create_vad(threshold=0.5, prefer_silero=False, use_adaptive=False)
         # Energy threshold should be 500 * 0.5 = 250
         assert vad.threshold == 250.0
 
