@@ -1,17 +1,24 @@
-# AICC Pipeline Dependencies
+# =============================================================================
+# AICC Pipeline - Python Dependencies
+# =============================================================================
+# Install: pip install -r requirements.txt
+# =============================================================================
 
 # Core
 numpy>=1.24.0
+
+# WebSocket
 websockets>=12.0
 
-# Korean NLP
+# Korean NLP (morpheme analysis for turn detection)
 kiwipiepy>=0.16.0
 
-# Google Cloud STT
+# Google Cloud Speech-to-Text
 google-cloud-speech>=2.21.0
-
-# Pipecat (optional - for advanced VAD)
-# pipecat-ai[silero]>=0.0.40
 
 # Audio processing
 pydub>=0.25.1
+
+# Optional: Silero VAD via Pipecat (higher accuracy than energy-based VAD)
+# Uncomment if you want to use Silero VAD:
+# pipecat-ai[silero]>=0.0.40
