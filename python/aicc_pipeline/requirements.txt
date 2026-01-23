@@ -1,0 +1,16 @@
+# AICC Pipeline Dependencies
+
+# Core
+numpy>=1.20.0
+
+# WebSocket
+websockets>=10.0
+
+# Google Cloud STT
+google-cloud-speech>=2.0.0
+
+# Korean Morpheme Analysis
+kiwipiepy>=0.14.0
+
+# Optional: Silero VAD via Pipecat (higher accuracy)
+# pipecat-ai>=0.0.1
