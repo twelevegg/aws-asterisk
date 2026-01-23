@@ -1,19 +1,29 @@
 /**
  * AICC Stasis v5 - Dual Snoop for Speaker Separation
- * 
+ *
  * 고객(in) → UDP:12345
  * 상담사(out) → UDP:12346
+ *
+ * Environment Variables:
+ *   ARI_URL          - ARI endpoint (default: http://127.0.0.1:8088/ari)
+ *   ARI_USERNAME     - ARI username (default: asterisk)
+ *   ARI_PASSWORD     - ARI password (default: asterisk)
+ *   EXTERNAL_HOST    - External media host (default: 127.0.0.1)
+ *   CUSTOMER_PORT    - Customer audio UDP port (default: 12345)
+ *   AGENT_PORT       - Agent audio UDP port (default: 12346)
+ *   APP_NAME         - Stasis app name (default: linphone-handler)
  */
 const AriClient = require('ari-client');
 const { v4: uuidv4 } = require('uuid');
 
-const ARI_URL = 'http://127.0.0.1:8088/ari';
-const ARI_USERNAME = 'asterisk';
-const ARI_PASSWORD = 'asterisk';
-const EXTERNAL_HOST = '127.0.0.1';
-const CUSTOMER_PORT = '12345';  // 고객 음성
-const AGENT_PORT = '12346';     // 상담사 음성
-const APP_NAME = 'linphone-handler';
+// Configuration from environment variables with defaults
+const ARI_URL = process.env.ARI_URL || 'http://127.0.0.1:8088/ari';
+const ARI_USERNAME = process.env.ARI_USERNAME || 'asterisk';
+const ARI_PASSWORD = process.env.ARI_PASSWORD || 'asterisk';
+const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
+const CUSTOMER_PORT = process.env.CUSTOMER_PORT || '12345';
+const AGENT_PORT = process.env.AGENT_PORT || '12346';
+const APP_NAME = process.env.APP_NAME || 'linphone-handler';
 
 // Active calls tracking
 const activeCalls = new Map();
