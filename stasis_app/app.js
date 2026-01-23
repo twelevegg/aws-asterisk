@@ -90,7 +90,7 @@ async function main() {
                 try {
                     await channel.hangup();
                 } catch (e) {
-                    // Ignore hangup errors
+                    console.debug(`[DEBUG] Hangup after error: ${e.message}`);
                 }
             }
         });
@@ -109,7 +109,9 @@ async function main() {
                         console.log(`[CLEANUP] External channel destroyed`);
                     }
                 } catch (e) {
-                    // Ignore cleanup errors
+                    if (!e.message?.includes('not found')) {
+                        console.debug(`[DEBUG] External channel cleanup: ${e.message}`);
+                    }
                 }
 
                 try {
@@ -118,7 +120,9 @@ async function main() {
                         console.log(`[CLEANUP] Bridge destroyed`);
                     }
                 } catch (e) {
-                    // Ignore cleanup errors
+                    if (!e.message?.includes('not found')) {
+                        console.debug(`[DEBUG] Bridge cleanup: ${e.message}`);
+                    }
                 }
 
                 activeBridges.delete(channelId);
@@ -151,9 +155,10 @@ process.on('SIGINT', async () => {
         try {
             if (resources.bridge) {
                 await resources.bridge.destroy();
+                console.log(`[SHUTDOWN] Bridge ${channelId} destroyed`);
             }
         } catch (e) {
-            // Ignore
+            console.debug(`[SHUTDOWN] Bridge cleanup: ${e.message}`);
         }
     }
 
