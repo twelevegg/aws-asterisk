@@ -1,0 +1,25 @@
+{
+  "name": "aicc-stasis",
+  "version": "2.0.0",
+  "description": "AICC Stasis Application - Dual Snoop for Speaker Separation",
+  "main": "dist/app.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "ts-node app.ts",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "ari-client": "^2.2.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
