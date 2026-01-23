@@ -22,6 +22,16 @@ import numpy as np
 from ..config import PipelineConfig, get_config
 
 logger = logging.getLogger("aicc.pipeline")
+
+
+def _safe_task(coro, name: str = "task"):
+    """Create an asyncio task with error handling."""
+    async def wrapper():
+        try:
+            return await coro
+        except Exception as e:
+            logger.error(f"Async task '{name}' failed: {e}")
+    return asyncio.create_task(wrapper())
 from ..vad import create_vad, BaseVAD
 from ..stt import GoogleCloudSTT
 from ..turn import TurnDetector, TurnDecision
@@ -175,7 +185,7 @@ class SpeakerProcessor:
                 self._silence_frames += 1
 
                 if self._silence_frames >= min_silence_frames:
-                    asyncio.create_task(self._finalize_turn())
+                    _safe_task(self._finalize_turn(), "finalize_turn")
 
     async def _finalize_turn(self):
         """Finalize current turn and emit event."""
@@ -294,7 +304,7 @@ class AICCPipeline:
                 customer_number="incoming",
                 agent_id="agent01",
             )
-            asyncio.create_task(self._ws_manager.send(event))
+            _safe_task(self._ws_manager.send(event), "send_metadata_start")
 
     async def start(self):
         """Start the pipeline."""
@@ -325,14 +335,14 @@ class AICCPipeline:
         self._customer_processor = SpeakerProcessor(
             speaker="customer",
             config=self.config,
-            on_turn=lambda e: asyncio.create_task(self._on_turn(e)),
+            on_turn=lambda e: _safe_task(self._on_turn(e), "customer_turn"),
             call_id=self._call_id,
         )
 
         self._agent_processor = SpeakerProcessor(
             speaker="agent",
             config=self.config,
-            on_turn=lambda e: asyncio.create_task(self._on_turn(e)),
+            on_turn=lambda e: _safe_task(self._on_turn(e), "agent_turn"),
             call_id=self._call_id,
         )
 
