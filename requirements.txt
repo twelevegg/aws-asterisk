@@ -22,3 +22,8 @@ pydub>=0.25.1
 # Optional: Silero VAD via Pipecat (higher accuracy than energy-based VAD)
 # Uncomment if you want to use Silero VAD:
 # pipecat-ai[silero]>=0.0.40
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
