@@ -5,7 +5,7 @@ Converts telephony audio (u-law 8kHz) to PCM 16kHz for STT processing.
 """
 
 import audioop
-from typing import Tuple
+from typing import Any, Optional, Tuple
 
 
 class AudioConverter:
@@ -42,8 +42,8 @@ class AudioConverter:
         pcm_data: bytes,
         src_rate: int,
         dst_rate: int,
-        state: bytes = None
-    ) -> Tuple[bytes, bytes]:
+        state: Any = None
+    ) -> Tuple[bytes, Any]:
         """
         Resample PCM audio to a different sample rate.
 
@@ -51,7 +51,7 @@ class AudioConverter:
             pcm_data: 16-bit PCM audio data
             src_rate: Source sample rate (e.g., 8000)
             dst_rate: Destination sample rate (e.g., 16000)
-            state: Resampler state for continuous streams
+            state: Resampler state for continuous streams (opaque type from audioop)
 
         Returns:
             Tuple of (resampled_data, new_state)
@@ -59,7 +59,7 @@ class AudioConverter:
         resampled, new_state = audioop.ratecv(
             pcm_data, 2, 1, src_rate, dst_rate, state
         )
-        return resampled, new_state
+        return bytes(resampled), new_state
 
     @classmethod
     def convert(cls, ulaw_bytes: bytes, src_rate: int = 8000, dst_rate: int = 16000) -> bytes:

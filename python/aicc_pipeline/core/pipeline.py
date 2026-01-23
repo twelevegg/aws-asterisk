@@ -63,36 +63,30 @@ class TurnEvent:
     complete_turns: Optional[int] = None
     incomplete_turns: Optional[int] = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, object]:
         """Convert to dictionary for JSON serialization."""
-        result = {
+        result: Dict[str, object] = {
             "type": self.type,
             "call_id": self.call_id,
             "timestamp": self.timestamp
         }
 
         if self.type == "metadata_start":
-            result.update({
-                "customer_number": self.customer_number,
-                "agent_id": self.agent_id,
-            })
+            result["customer_number"] = self.customer_number
+            result["agent_id"] = self.agent_id
         elif self.type == "metadata_end":
-            result.update({
-                "total_duration": self.total_duration,
-                "turn_count": self.turn_count,
-                "speech_ratio": self.speech_ratio,
-                "complete_turns": self.complete_turns,
-                "incomplete_turns": self.incomplete_turns,
-            })
+            result["total_duration"] = self.total_duration
+            result["turn_count"] = self.turn_count
+            result["speech_ratio"] = self.speech_ratio
+            result["complete_turns"] = self.complete_turns
+            result["incomplete_turns"] = self.incomplete_turns
         elif self.type == "turn_complete":
-            result.update({
-                "speaker": self.speaker,
-                "start_time": self.start_time,
-                "end_time": self.end_time,
-                "transcript": self.transcript,
-                "decision": self.decision,
-                "fusion_score": self.fusion_score,
-            })
+            result["speaker"] = self.speaker
+            result["start_time"] = self.start_time
+            result["end_time"] = self.end_time
+            result["transcript"] = self.transcript
+            result["decision"] = self.decision
+            result["fusion_score"] = self.fusion_score
 
         return result
 
@@ -297,7 +291,7 @@ class AICCPipeline:
 
     def _on_first_packet(self, speaker: str):
         """Handle first packet (send metadata_start)."""
-        if speaker == "customer" and self._ws_manager:
+        if speaker == "customer" and self._ws_manager and self._call_id:
             event = TurnEvent(
                 type="metadata_start",
                 call_id=self._call_id,
@@ -377,7 +371,7 @@ class AICCPipeline:
             self._agent_receiver.stop()
 
         # Send metadata_end
-        if self._start_time and self._ws_manager:
+        if self._start_time and self._ws_manager and self._call_id:
             total_duration = time.time() - self._start_time
 
             customer_stats = (

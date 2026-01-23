@@ -12,15 +12,18 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from websockets.legacy.client import WebSocketClientProtocol
 
 logger = logging.getLogger("aicc.websocket")
 
 try:
     import websockets
-    from websockets.client import WebSocketClientProtocol
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
+    websockets = None  # type: ignore[assignment]
     WEBSOCKETS_AVAILABLE = False
 
 
@@ -80,22 +83,22 @@ class WebSocketManager:
         self.ping_interval = ping_interval
         self.ping_timeout = ping_timeout
 
-        self._connections: Dict[str, WebSocketClientProtocol] = {}
+        self._connections: Dict[str, Any] = {}  # WebSocket connections
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
         self._running = False
         self._dropped_count = 0
         self._sent_count = 0
         self._reconnect_tasks: Dict[str, asyncio.Task] = {}
 
-    def _is_connected(self, ws) -> bool:
+    def _is_connected(self, ws: Any) -> bool:
         """Check if WebSocket is connected (compatible with different versions)."""
         try:
             # websockets >= 11.0
             from websockets.protocol import State
-            return ws.state == State.OPEN
+            return bool(ws.state == State.OPEN)
         except (ImportError, AttributeError):
             # websockets < 11.0
-            return getattr(ws, 'open', False)
+            return bool(getattr(ws, 'open', False))
 
     @property
     def connected_count(self) -> int:

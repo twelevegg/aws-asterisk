@@ -121,6 +121,8 @@ class KoreanMorphemeAnalyzer:
         Returns:
             Completion score or None if analysis fails
         """
+        if self._kiwi is None:
+            return None
         result = self._kiwi.analyze(text)
         if not result or not result[0][0]:
             return None
