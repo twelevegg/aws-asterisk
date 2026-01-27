@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 AICC Pipeline - UDP RTP → VAD → STT → WebSocket
 
@@ -12,8 +12,8 @@ Ports:
     - UDP 12346: Agent audio
     
 WebSocket:
-    - ws://127.0.0.1:8000/api/v1/agent/check (local)
-    - wss://hewable-wholly-wesley.ngrok-free.dev/api/v1/agent/check (ngrok)
+    - wss://51ac652b2c5c.ngrok-free.app/api/v1/agent/check (local)
+    - wss://51ac652b2c5c.ngrok-free.app/api/v1/agent/check (ngrok)
 """
 
 import asyncio
@@ -88,7 +88,11 @@ class PipelineConfig:
     min_silence_ms: float = 400.0
     
     # WebSocket
-    ws_url: str = "ws://127.0.0.1:8000/api/v1/agent/check"
+    ws_url: str = "wss://51ac652b2c5c.ngrok-free.app/api/v1/agent/check"
+    ws_urls: List[str] = field(default_factory=lambda: [
+        "wss://51ac652b2c5c.ngrok-free.app/api/v1/agent/check",  # 메인
+        # "wss://NEW_URL.ngrok-free.app/api/v1/log",  # 데이터 수집용 (주석 해제 후 URL 변경)
+    ])
     ws_reconnect_interval: float = 5.0
     
     # STT
@@ -558,71 +562,84 @@ class SpeakerProcessor:
 # =============================================================================
 
 class WebSocketManager:
-    """Manage WebSocket connection to FastAPI."""
+    """Manage multiple WebSocket connections."""
     
     def __init__(self, config: PipelineConfig):
         self.config = config
-        self._ws = None
-        self._connected = False
+        self._connections: Dict[str, websockets.WebSocketClientProtocol] = {}
         self._queue: asyncio.Queue = asyncio.Queue()
         self._running = False
     
-    async def connect(self):
-        """Connect to WebSocket server."""
-        while self._running:
-            try:
-                print(f"🔌 Connecting to WebSocket: {self.config.ws_url}")
-                self._ws = await websockets.connect(
-                    self.config.ws_url,
-                    ping_interval=20,
-                    ping_timeout=10,
-                )
-                self._connected = True
-                print("✅ WebSocket connected!")
-                return
-            except Exception as e:
-                print(f"⚠️  WebSocket connection failed: {e}")
-                print(f"   Retrying in {self.config.ws_reconnect_interval}s...")
-                await asyncio.sleep(self.config.ws_reconnect_interval)
+    async def _connect_one(self, url: str) -> bool:
+        """Connect to a single WebSocket server."""
+        try:
+            print(f"🔌 Connecting to: {url}")
+            ws = await websockets.connect(url, ping_interval=20, ping_timeout=10)
+            self._connections[url] = ws
+            print(f"✅ Connected: {url}")
+            return True
+        except Exception as e:
+            print(f"⚠️  Failed: {url} - {e}")
+            return False
+    
+    async def connect_all(self):
+        """Connect to all WebSocket servers."""
+        urls = [u for u in self.config.ws_urls if u and not u.strip().startswith("#")]
+        if not urls:
+            urls = [self.config.ws_url]
+        
+        for url in urls:
+            await self._connect_one(url)
+        
+        if not self._connections:
+            print(f"⚠️  No connections. Retrying in {self.config.ws_reconnect_interval}s...")
+            await asyncio.sleep(self.config.ws_reconnect_interval)
+            await self.connect_all()
     
     async def send(self, event: TurnEvent):
-        """Send event to WebSocket."""
+        """Queue event for sending."""
         await self._queue.put(event)
     
     async def _send_loop(self):
-        """Background loop to send queued events."""
+        """Send queued events to all connections."""
         while self._running:
             try:
                 event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                data = json.dumps(event.to_dict(), ensure_ascii=False)
                 
-                if not self._connected or not self._ws:
-                    await self.connect()
+                dead_urls = []
+                for url, ws in list(self._connections.items()):
+                    try:
+                        if ws.open:
+                            await ws.send(data)
+                            print(f"📤 [{url.split('//')[1][:20]}] {event.type}")
+                        else:
+                            dead_urls.append(url)
+                    except Exception as e:
+                        print(f"⚠️  Send error: {e}")
+                        dead_urls.append(url)
                 
-                if self._ws:
-                    data = json.dumps(event.to_dict(), ensure_ascii=False)
-                    await self._ws.send(data)
-                    print(f"📤 Sent: {event.type} ({event.speaker if hasattr(event, 'speaker') and event.speaker else 'meta'})")
+                for url in dead_urls:
+                    del self._connections[url]
+                    asyncio.create_task(self._connect_one(url))
                     
             except asyncio.TimeoutError:
                 continue
-            except websockets.exceptions.ConnectionClosed:
-                print("⚠️  WebSocket disconnected, reconnecting...")
-                self._connected = False
-                await self.connect()
-            except Exception as e:
-                print(f"⚠️  Send error: {e}")
     
     async def start(self):
         """Start WebSocket manager."""
         self._running = True
         asyncio.create_task(self._send_loop())
-        await self.connect()
+        await self.connect_all()
     
     async def stop(self):
         """Stop WebSocket manager."""
         self._running = False
-        if self._ws:
-            await self._ws.close()
+        for ws in self._connections.values():
+            try:
+                await ws.close()
+            except:
+                pass
 
 
 # =============================================================================
@@ -776,9 +793,9 @@ async def main():
     
     config = PipelineConfig(
         # Local FastAPI
-        ws_url="ws://127.0.0.1:8000/api/v1/agent/check",
+        ws_url="wss://51ac652b2c5c.ngrok-free.app/api/v1/agent/check",
         # Or use ngrok
-        # ws_url="wss://hewable-wholly-wesley.ngrok-free.dev/api/v1/agent/check",
+        # ws_url="wss://51ac652b2c5c.ngrok-free.app/api/v1/agent/check",
     )
     
     pipeline = AICCPipeline(config)

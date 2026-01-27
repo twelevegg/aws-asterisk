@@ -52,3 +52,31 @@ tmp/
 .vscode/
 *.swp
 *.swo
+
+# Testing & Development (배포 제외)
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+pytest.ini
+mypy.ini
+tests/
+*.backup
+*_legacy.py
+
+# Documentation (배포 제외)
+docs/
+
+# Refactoring/Development (배포 제외)
+refactoring/
+.claude/
+
+# TypeScript source (JS만 배포)
+*.ts
+!*.d.ts
+tsconfig.json
+
+# Logs
+*.log
+logs/
+
