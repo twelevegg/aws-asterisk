@@ -1,174 +1,288 @@
 /**
- * Stasis Application for Linphone SIP Integration
- *
- * This app handles incoming calls and creates ExternalMedia channels
- * to forward RTP audio to a UDP endpoint (Python receiver).
+ * AICC Stasis App - Dual Snoop with Agent Dial
  *
  * Flow:
- * 1. Incoming call triggers StasisStart event
- * 2. Create ExternalMedia channel pointing to UDP receiver
- * 3. Create mixing bridge to connect both channels
- * 4. RTP audio flows to UDP receiver for processing
+ * 1. Customer calls youngho@sip.linphone.org
+ * 2. Asterisk answers and dials agent02
+ * 3. Both channels connected via bridge
+ * 4. Dual Snoop separates audio:
+ *    - Customer (in) → UDP:12345
+ *    - Agent (out) → UDP:12346
  */
 
 const AriClient = require('ari-client');
+const { v4: uuidv4 } = require('uuid');
 
-// Configuration from environment variables
+// Configuration
 const ARI_URL = process.env.ARI_URL || 'http://127.0.0.1:8088/ari';
 const ARI_USERNAME = process.env.ARI_USERNAME || 'asterisk';
 const ARI_PASSWORD = process.env.ARI_PASSWORD || 'asterisk';
-const EXTERNAL_MEDIA_HOST = process.env.EXTERNAL_MEDIA_HOST || '127.0.0.1';
-const EXTERNAL_MEDIA_PORT = process.env.EXTERNAL_MEDIA_PORT || '12345';
+const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
+const CUSTOMER_PORT = process.env.CUSTOMER_PORT || '12345';
+const AGENT_PORT = process.env.AGENT_PORT || '12346';
 const STASIS_APP_NAME = 'linphone-handler';
+const AGENT_ENDPOINT = process.env.AGENT_ENDPOINT || 'PJSIP/agent02';
+const DIAL_TIMEOUT = 30; // seconds
 
 console.log('='.repeat(60));
-console.log('Stasis Application Starting');
+console.log('AICC Stasis App - Dual Snoop with Agent Dial');
 console.log('='.repeat(60));
 console.log(`ARI URL: ${ARI_URL}`);
-console.log(`External Media: ${EXTERNAL_MEDIA_HOST}:${EXTERNAL_MEDIA_PORT}`);
+console.log(`Customer audio → UDP:${CUSTOMER_PORT}`);
+console.log(`Agent audio → UDP:${AGENT_PORT}`);
+console.log(`Agent endpoint: ${AGENT_ENDPOINT}`);
 console.log('='.repeat(60));
 
-// Track active bridges for cleanup
-const activeBridges = new Map();
+// Track active calls
+const activeCalls = new Map();
 
 async function main() {
     try {
-        // Connect to ARI
         const client = await AriClient.connect(ARI_URL, ARI_USERNAME, ARI_PASSWORD);
-        console.log(`[INFO] Connected to ARI at ${ARI_URL}`);
+        console.log('[INFO] Connected to ARI');
 
-        // Handle incoming calls (StasisStart event)
         client.on('StasisStart', async (event, channel) => {
-            // Skip ExternalMedia channels - they also trigger StasisStart
-            // ExternalMedia channels have names like "UnicastRTP/..." or "ExternalMedia/..."
-            if (channel.name && (channel.name.startsWith('UnicastRTP/') || channel.name.startsWith('ExternalMedia/'))) {
-                console.log(`[DEBUG] Ignoring ExternalMedia channel: ${channel.name}`);
+            const channelName = channel.name || '';
+
+            // Skip helper channels (Snoop, ExternalMedia, etc.)
+            if (channelName.includes('UnicastRTP') ||
+                channelName.includes('Snoop') ||
+                channelName.includes('ExternalMedia')) {
+                console.log(`[DEBUG] Ignoring helper channel: ${channelName}`);
                 return;
             }
 
-            const callerId = channel.caller.number || 'Unknown';
-            const channelId = channel.id;
+            // Skip agent channel (will be handled separately)
+            if (channelName.includes('agent02')) {
+                console.log(`[DEBUG] Agent channel joined: ${channelName}`);
+                return;
+            }
+
+            const callId = uuidv4();
+            const callerNumber = channel.caller.number || 'Unknown';
 
             console.log('\n' + '='.repeat(60));
-            console.log(`[CALL] Incoming call from: ${callerId}`);
-            console.log(`[CALL] Channel ID: ${channelId}`);
+            console.log(`[${callId}] Incoming call from: ${callerNumber}`);
+            console.log(`[${callId}] Customer channel: ${channel.id}`);
             console.log('='.repeat(60));
 
             try {
-                // Answer the channel
+                // 1. Answer the customer channel
                 await channel.answer();
-                console.log(`[INFO] Channel answered: ${channelId}`);
+                console.log(`[${callId}] Customer channel answered`);
 
-                // Create ExternalMedia channel
-                const externalChannel = await client.channels.externalMedia({
-                    app: STASIS_APP_NAME,
-                    external_host: `${EXTERNAL_MEDIA_HOST}:${EXTERNAL_MEDIA_PORT}`,
-                    format: 'ulaw',
-                    encapsulation: 'rtp',
-                    transport: 'udp',
-                    connection_type: 'client',
-                    direction: 'both',
-                    data: `call_${channelId}`
-                });
-
-                console.log(`[INFO] ExternalMedia channel created: ${externalChannel.id}`);
-                console.log(`[INFO] RTP will be sent to: ${EXTERNAL_MEDIA_HOST}:${EXTERNAL_MEDIA_PORT}`);
-
-                // Create mixing bridge
-                const bridge = await client.bridges.create({
+                // 2. Create main bridge for customer <-> agent
+                const mainBridge = await client.bridges.create({
                     type: 'mixing',
-                    name: `bridge_${channelId}`
+                    name: `main_${callId}`
                 });
-                console.log(`[INFO] Bridge created: ${bridge.id}`);
+                console.log(`[${callId}] Main bridge created: ${mainBridge.id}`);
 
-                // Store bridge info for cleanup
-                activeBridges.set(channelId, {
-                    bridge: bridge,
-                    externalChannel: externalChannel
+                // 3. Add customer to main bridge
+                await mainBridge.addChannel({ channel: channel.id });
+                console.log(`[${callId}] Customer added to bridge`);
+
+                // 4. Dial agent02
+                console.log(`[${callId}] Dialing ${AGENT_ENDPOINT}...`);
+                const agentChannel = await client.channels.originate({
+                    endpoint: AGENT_ENDPOINT,
+                    app: STASIS_APP_NAME,
+                    appArgs: `dialed_${callId}`,
+                    callerId: callerNumber,
+                    timeout: DIAL_TIMEOUT
+                });
+                console.log(`[${callId}] Agent channel created: ${agentChannel.id}`);
+
+                // Store call data for tracking
+                const callData = {
+                    callId,
+                    callerNumber,
+                    startTime: new Date(),
+                    customerChannel: channel.id,
+                    agentChannel: agentChannel.id,
+                    mainBridge: mainBridge.id,
+                    resources: []
+                };
+                activeCalls.set(channel.id, callData);
+                activeCalls.set(agentChannel.id, callData); // Also index by agent channel
+
+                // 5. Wait for agent to answer, then setup snoop
+                agentChannel.on('StasisStart', async () => {
+                    console.log(`[${callId}] Agent answered!`);
+
+                    try {
+                        // Add agent to main bridge
+                        await mainBridge.addChannel({ channel: agentChannel.id });
+                        console.log(`[${callId}] Agent added to bridge - Call connected!`);
+
+                        // 6. Setup Dual Snoop for audio separation
+                        await setupDualSnoop(client, channel, callData);
+
+                    } catch (err) {
+                        console.error(`[${callId}] Error setting up call:`, err.message);
+                    }
                 });
 
-                // Add channels to bridge
-                await bridge.addChannel({ channel: [channel.id, externalChannel.id] });
-                console.log(`[INFO] Channels added to bridge`);
-                console.log(`[INFO] Audio is now flowing to UDP ${EXTERNAL_MEDIA_HOST}:${EXTERNAL_MEDIA_PORT}`);
+                // Handle agent channel end
+                agentChannel.on('StasisEnd', () => {
+                    console.log(`[${callId}] Agent hung up`);
+                    cleanup(client, callData);
+                });
+
+                // Handle agent dial failure
+                agentChannel.on('ChannelDestroyed', () => {
+                    if (!callData.connected) {
+                        console.log(`[${callId}] Agent did not answer`);
+                        cleanup(client, callData);
+                    }
+                });
 
             } catch (err) {
-                console.error(`[ERROR] Failed to setup call: ${err.message}`);
+                console.error(`[${callId}] Error:`, err.message);
                 try {
                     await channel.hangup();
                 } catch (e) {
-                    console.debug(`[DEBUG] Hangup after error: ${e.message}`);
+                    // Ignore hangup errors
                 }
             }
         });
 
-        // Handle call end (StasisEnd event)
         client.on('StasisEnd', async (event, channel) => {
-            const channelId = channel.id;
-            console.log(`\n[CALL END] Channel ended: ${channelId}`);
-
-            // Cleanup bridge and external channel
-            const resources = activeBridges.get(channelId);
-            if (resources) {
-                try {
-                    if (resources.externalChannel) {
-                        await resources.externalChannel.hangup();
-                        console.log(`[CLEANUP] External channel destroyed`);
-                    }
-                } catch (e) {
-                    if (!e.message?.includes('not found')) {
-                        console.debug(`[DEBUG] External channel cleanup: ${e.message}`);
-                    }
-                }
-
-                try {
-                    if (resources.bridge) {
-                        await resources.bridge.destroy();
-                        console.log(`[CLEANUP] Bridge destroyed`);
-                    }
-                } catch (e) {
-                    if (!e.message?.includes('not found')) {
-                        console.debug(`[DEBUG] Bridge cleanup: ${e.message}`);
-                    }
-                }
-
-                activeBridges.delete(channelId);
+            const callData = activeCalls.get(channel.id);
+            if (callData && channel.id === callData.customerChannel) {
+                const duration = (new Date() - callData.startTime) / 1000;
+                console.log(`\n[${callData.callId}] Customer hung up - Duration: ${duration.toFixed(1)}s`);
+                cleanup(client, callData);
             }
         });
 
-        // Handle channel destroyed event
-        client.on('ChannelDestroyed', (event, channel) => {
-            console.log(`[EVENT] Channel destroyed: ${channel.id}`);
-        });
-
-        // Start the Stasis application
         await client.start(STASIS_APP_NAME);
-        console.log(`[INFO] Stasis app '${STASIS_APP_NAME}' started and listening for calls...`);
-        console.log('[INFO] Waiting for incoming calls to youngho@sip.linphone.org');
+        console.log('\n[INFO] Waiting for calls to youngho@sip.linphone.org...\n');
 
     } catch (err) {
-        console.error(`[FATAL] Failed to connect to ARI: ${err.message}`);
-        console.error('[HINT] Make sure Asterisk is running and ARI is enabled');
+        console.error('[FATAL] Failed to connect to ARI:', err.message);
         process.exit(1);
     }
 }
 
-// Handle graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('\n[INFO] Shutting down...');
+async function setupDualSnoop(client, customerChannel, callData) {
+    const { callId } = callData;
 
-    // Cleanup all active bridges
-    for (const [channelId, resources] of activeBridges) {
+    try {
+        // Snoop for Customer audio (what customer says - 'in' direction)
+        const customerSnoop = await client.channels.snoopChannel({
+            channelId: customerChannel.id,
+            app: STASIS_APP_NAME,
+            spy: 'in',
+            whisper: 'none'
+        });
+        console.log(`[${callId}] Customer Snoop created (spy: in)`);
+        callData.resources.push({ type: 'channel', id: customerSnoop.id });
+
+        // Bridge + ExternalMedia for Customer
+        const customerBridge = await client.bridges.create({ type: 'mixing' });
+        callData.resources.push({ type: 'bridge', id: customerBridge.id });
+
+        const customerExternal = await client.channels.externalMedia({
+            app: STASIS_APP_NAME,
+            external_host: `${EXTERNAL_HOST}:${CUSTOMER_PORT}`,
+            format: 'ulaw',
+            encapsulation: 'rtp',
+            transport: 'udp',
+            connection_type: 'client',
+            direction: 'both'
+        });
+        callData.resources.push({ type: 'channel', id: customerExternal.id });
+
+        await customerBridge.addChannel({ channel: customerSnoop.id });
+        await customerBridge.addChannel({ channel: customerExternal.id });
+        console.log(`[${callId}] Customer audio → UDP:${CUSTOMER_PORT}`);
+
+        // Snoop for Agent audio (what agent says - 'out' direction)
+        const agentSnoop = await client.channels.snoopChannel({
+            channelId: customerChannel.id,
+            app: STASIS_APP_NAME,
+            spy: 'out',
+            whisper: 'none'
+        });
+        console.log(`[${callId}] Agent Snoop created (spy: out)`);
+        callData.resources.push({ type: 'channel', id: agentSnoop.id });
+
+        // Bridge + ExternalMedia for Agent
+        const agentBridge = await client.bridges.create({ type: 'mixing' });
+        callData.resources.push({ type: 'bridge', id: agentBridge.id });
+
+        const agentExternal = await client.channels.externalMedia({
+            app: STASIS_APP_NAME,
+            external_host: `${EXTERNAL_HOST}:${AGENT_PORT}`,
+            format: 'ulaw',
+            encapsulation: 'rtp',
+            transport: 'udp',
+            connection_type: 'client',
+            direction: 'both'
+        });
+        callData.resources.push({ type: 'channel', id: agentExternal.id });
+
+        await agentBridge.addChannel({ channel: agentSnoop.id });
+        await agentBridge.addChannel({ channel: agentExternal.id });
+        console.log(`[${callId}] Agent audio → UDP:${AGENT_PORT}`);
+
+        callData.connected = true;
+        console.log(`[${callId}] Dual Snoop active - Audio separation enabled`);
+
+    } catch (err) {
+        console.error(`[${callId}] Snoop setup error:`, err.message);
+    }
+}
+
+async function cleanup(client, callData) {
+    if (!callData || callData.cleaned) return;
+    callData.cleaned = true;
+
+    const { callId } = callData;
+    console.log(`[${callId}] Cleaning up resources...`);
+
+    // Cleanup resources in reverse order
+    for (const resource of callData.resources.reverse()) {
         try {
-            if (resources.bridge) {
-                await resources.bridge.destroy();
-                console.log(`[SHUTDOWN] Bridge ${channelId} destroyed`);
+            if (resource.type === 'channel') {
+                await client.channels.hangup({ channelId: resource.id });
+            } else if (resource.type === 'bridge') {
+                await client.bridges.destroy({ bridgeId: resource.id });
             }
         } catch (e) {
-            console.debug(`[SHUTDOWN] Bridge cleanup: ${e.message}`);
+            // Ignore cleanup errors
         }
     }
 
+    // Cleanup main bridge
+    if (callData.mainBridge) {
+        try {
+            await client.bridges.destroy({ bridgeId: callData.mainBridge });
+        } catch (e) {
+            // Ignore
+        }
+    }
+
+    // Hangup remaining channels
+    for (const chId of [callData.customerChannel, callData.agentChannel]) {
+        if (chId) {
+            try {
+                await client.channels.hangup({ channelId: chId });
+            } catch (e) {
+                // Ignore
+            }
+        }
+    }
+
+    activeCalls.delete(callData.customerChannel);
+    activeCalls.delete(callData.agentChannel);
+    console.log(`[${callId}] Cleanup complete`);
+}
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('\n[INFO] Shutting down...');
     process.exit(0);
 });
 
@@ -176,5 +290,4 @@ process.on('SIGTERM', () => {
     process.emit('SIGINT');
 });
 
-// Start the application
 main();
