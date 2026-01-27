@@ -16,13 +16,20 @@ const { v4: uuidv4 } = require('uuid');
 // Configuration
 const ARI_URL = process.env.ARI_URL || 'http://127.0.0.1:8088/ari';
 const ARI_USERNAME = process.env.ARI_USERNAME || 'asterisk';
-const ARI_PASSWORD = process.env.ARI_PASSWORD || 'asterisk';
+const ARI_PASSWORD = process.env.ARI_PASSWORD;  // Required - no default
 const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
 const CUSTOMER_PORT = process.env.CUSTOMER_PORT || '12345';
 const AGENT_PORT = process.env.AGENT_PORT || '12346';
 const STASIS_APP_NAME = 'linphone-handler';
 const AGENT_ENDPOINT = process.env.AGENT_ENDPOINT || 'PJSIP/agent02';
 const DIAL_TIMEOUT = 30; // seconds
+
+// Validate required environment variables
+if (!ARI_PASSWORD) {
+    console.error('FATAL: ARI_PASSWORD environment variable is required');
+    console.error('Set it with: export ARI_PASSWORD=your_secure_password');
+    process.exit(1);
+}
 
 console.log('='.repeat(60));
 console.log('AICC Stasis App - Dual Snoop with Agent Dial');
