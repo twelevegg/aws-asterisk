@@ -3,27 +3,6 @@ name: Deploy to EC2
 on:
   push:
     branches: [main]
-    paths:
-      # 배포 트리거 경로 - 실제 애플리케이션 코드만
-      - 'stasis_app/**'
-      - 'python/**'
-      - 'config/**'
-      - 'requirements.txt'
-      - 'package.json'
-    paths-ignore:
-      # 배포 제외 경로 - 불필요한 파일들
-      - 'tests/**'
-      - 'docs/**'
-      - 'refactoring/**'
-      - '*.md'
-      - '*.backup'
-      - '.claude/**'
-      - '.mypy_cache/**'
-      - '.pytest_cache/**'
-      - 'mypy.ini'
-      - 'pytest.ini'
-      - 'tsconfig.json'
-      - '*.ts'
 
 jobs:
   deploy:
@@ -37,38 +16,12 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ~/aws_asterisk
-            
-            # Git pull (only tracked files, .gitignore excludes unnecessary files)
             git pull origin main
             
-            # ===== Deploy stasis_app (Node.js) =====
-            echo "Deploying stasis_app..."
+            # stasis_app 재시작
             cd ~/aws_asterisk/stasis_app
-            npm install --production  # production 의존성만 설치
+            npm install
+            pkill -f "node app.js" || true
+            nohup node app.js > ~/app.log 2>&1 &
             
-            # PM2로 stasis_app 재시작 (설치되어 있는 경우)
-            if command -v pm2 &> /dev/null; then
-              pm2 restart stasis_app || pm2 start app.js --name stasis_app
-            else
-              pkill -f "node app.js" || true
-              nohup node app.js > ~/logs/stasis_app.log 2>&1 &
-            fi
-            
-            # ===== Deploy aicc_pipeline (Python) =====
-            echo "Deploying aicc_pipeline..."
-            cd ~/aws_asterisk/python
-            
-            # Python 가상환경 활성화 및 의존성 설치
-            if [ -d "venv" ]; then
-              source venv/bin/activate
-            fi
-            pip install -r requirements.txt --quiet
-            
-            # aicc_pipeline 재시작
-            pkill -f "python.*aicc_pipeline" || true
-            pkill -f "python.*udp_receiver" || true
-            nohup python udp_receiver.py > ~/logs/aicc_pipeline.log 2>&1 &
-            
-            echo "✅ Deployment completed!"
-            echo "  - stasis_app: running"
-            echo "  - aicc_pipeline: running"
+            echo "Deployment completed!"
