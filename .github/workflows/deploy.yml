@@ -1,0 +1,31 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/aws_asterisk
+            
+            # Git pull
+            git pull origin main
+            
+            # Install dependencies
+            cd stasis_app
+            npm install
+            
+            # Restart app (kill old process, start new)
+            pkill -f "node app.js" || true
+            nohup node app.js > ~/app.log 2>&1 &
+            
+            echo "Deployment completed!"
