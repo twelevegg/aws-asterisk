@@ -39,6 +39,13 @@ async function main() {
 
         // Handle incoming calls (StasisStart event)
         client.on('StasisStart', async (event, channel) => {
+            // Skip ExternalMedia channels - they also trigger StasisStart
+            // ExternalMedia channels have names like "UnicastRTP/..." or "ExternalMedia/..."
+            if (channel.name && (channel.name.startsWith('UnicastRTP/') || channel.name.startsWith('ExternalMedia/'))) {
+                console.log(`[DEBUG] Ignoring ExternalMedia channel: ${channel.name}`);
+                return;
+            }
+
             const callerId = channel.caller.number || 'Unknown';
             const channelId = channel.id;
 
