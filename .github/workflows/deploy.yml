@@ -10,10 +10,13 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          AICC_WS_URL: ${{ secrets.AICC_WS_URL }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AICC_WS_URL
           script: |
             set -e
             echo "=== Starting deployment ==="
@@ -21,6 +24,15 @@ jobs:
             # 1. Pull latest code
             cd ~/aws_asterisk
             git pull origin main
+
+            # 1.5. Update .env file with WebSocket URL
+            echo "=== Updating environment variables ==="
+            if [ -n "$AICC_WS_URL" ]; then
+              grep -q "^AICC_WS_URL=" python/aicc_pipeline/.env 2>/dev/null && \
+                sed -i "s|^AICC_WS_URL=.*|AICC_WS_URL=$AICC_WS_URL|" python/aicc_pipeline/.env || \
+                echo "AICC_WS_URL=$AICC_WS_URL" >> python/aicc_pipeline/.env
+              echo "WebSocket URL updated: $AICC_WS_URL"
+            fi
 
             # 2. Deploy Asterisk configurations
             echo "=== Deploying Asterisk configs ==="
