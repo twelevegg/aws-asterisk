@@ -23,7 +23,8 @@ const DIAL_TIMEOUT = 30; // seconds
 
 // AgentRouter - Round-Robin agent selection
 class AgentRouter {
-    constructor() {
+    constructor(client) {
+        this.client = client;
         this.agents = [
             { id: 'agent01', endpoint: 'PJSIP/agent01', status: 'available' },
             { id: 'agent02', endpoint: 'PJSIP/agent02', status: 'available' },
@@ -35,23 +36,45 @@ class AgentRouter {
         this.currentIndex = 0;
     }
 
-    getNextAvailable() {
+    async isEndpointAvailable(agentId) {
+        try {
+            const endpoints = await this.client.endpoints.list();
+            const endpoint = endpoints.find(ep => ep.resource === agentId && ep.technology === 'PJSIP');
+            // state가 'online' 또는 'not in use'면 사용 가능
+            return endpoint && endpoint.state !== 'unavailable' && endpoint.state !== 'offline';
+        } catch (err) {
+            console.log(`[AgentRouter] Failed to check ${agentId} status: ${err.message}`);
+            return false;
+        }
+    }
+
+    async getNextAvailable() {
         let attempts = 0;
 
         while (attempts < this.agents.length) {
             const agent = this.agents[this.currentIndex];
             this.currentIndex = (this.currentIndex + 1) % this.agents.length;
 
-            if (agent.status === 'available') {
-                agent.status = 'busy';
-                return agent;
+            // 내부 상태 체크
+            if (agent.status !== 'available') {
+                attempts++;
+                continue;
             }
 
-            attempts++;
+            // Asterisk 등록 상태 체크
+            const isRegistered = await this.isEndpointAvailable(agent.id);
+            if (!isRegistered) {
+                console.log(`[AgentRouter] ${agent.id} not registered, skipping`);
+                attempts++;
+                continue;
+            }
+
+            agent.status = 'busy';
+            return agent;
         }
 
-        // If all busy, return null
-        console.log('[WARN] All agents busy');
+        // If all busy or unavailable, return null
+        console.log('[WARN] All agents busy or unavailable');
         return null;
     }
 
@@ -125,8 +148,8 @@ class PortPool {
     }
 }
 
-// Initialize global instances
-const agentRouter = new AgentRouter();
+// Initialize global instances (agentRouter will be initialized in main())
+let agentRouter = null;
 const portPool = new PortPool();
 
 // Validate required environment variables
@@ -141,7 +164,6 @@ console.log('AICC Stasis App - Dual Snoop with Round-Robin');
 console.log('='.repeat(60));
 console.log(`ARI URL: ${ARI_URL}`);
 console.log(`Port pool: ${portPool.basePort} - ${portPool.maxPort}`);
-console.log(`Agents: ${agentRouter.agents.map(a => a.id).join(', ')}`);
 console.log('='.repeat(60));
 
 // Track active calls
@@ -151,6 +173,9 @@ async function main() {
     try {
         const client = await AriClient.connect(ARI_URL, ARI_USERNAME, ARI_PASSWORD);
         console.log('[INFO] Connected to ARI');
+
+        // Initialize AgentRouter with ARI client
+        agentRouter = new AgentRouter(client);
 
         client.on('StasisStart', async (event, channel) => {
             const channelName = channel.name || '';
@@ -188,7 +213,7 @@ async function main() {
                 console.log(`[${callId}] Allocated ports - Customer: ${ports.customer}, Agent: ${ports.agent}`);
 
                 // 3. Select next available agent
-                const agent = agentRouter.getNextAvailable();
+                const agent = await agentRouter.getNextAvailable();
 
                 // If all agents busy, reject the call
                 if (!agent) {
