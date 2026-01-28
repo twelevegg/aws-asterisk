@@ -373,7 +373,7 @@ async function setupDualSnoop(client, customerChannel, callData) {
 
         // Snoop for Agent audio (what agent says - 'out' direction)
         const agentSnoop = await client.channels.snoopChannel({
-            channelId: customerChannel.id,
+            channelId: callData.agentChannel,
             app: STASIS_APP_NAME,
             spy: 'out',
             whisper: 'none'

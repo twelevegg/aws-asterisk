@@ -15,12 +15,42 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
+            echo "=== Starting deployment ==="
+
+            # 1. Pull latest code
             cd ~/aws_asterisk
             git pull origin main
-            
+
+            # 2. Deploy Asterisk configurations
+            echo "=== Deploying Asterisk configs ==="
+            sudo cp config/pjsip.conf /etc/asterisk/pjsip.conf
+            sudo cp config/rtp.conf /etc/asterisk/rtp.conf
+            sudo cp config/extensions.conf /etc/asterisk/extensions.conf
+            sudo cp config/ari.conf /etc/asterisk/ari.conf
+            sudo cp config/http.conf /etc/asterisk/http.conf
+            sudo chown asterisk:asterisk /etc/asterisk/*.conf
+            sudo chmod 640 /etc/asterisk/pjsip.conf
+
+            # 3. Reload Asterisk
+            echo "=== Reloading Asterisk ==="
+            sudo asterisk -rx "core reload"
+            sleep 2
+            sudo asterisk -rx "pjsip reload"
+            sudo asterisk -rx "dialplan reload"
+
+            # 4. Install Node.js dependencies
+            echo "=== Installing Stasis App dependencies ==="
             cd ~/aws_asterisk/stasis_app
-            npm install
-            
+            npm install --production
+
+            # 5. Restart Stasis App
+            echo "=== Restarting Stasis App ==="
             sudo systemctl restart stasis-app
-            
-            echo "Deployment completed!"
+
+            # 6. Verify deployment
+            echo "=== Verifying deployment ==="
+            sudo asterisk -rx "pjsip show registrations"
+            sudo asterisk -rx "ari show apps"
+
+            echo "=== Deployment completed! ==="
