@@ -9,7 +9,7 @@ logger = logging.getLogger("aicc.port_pool")
 class PortPool:
     """Thread-safe dynamic port allocation pool."""
 
-    def __init__(self, start: int = 20000, end: int = 30000):
+    def __init__(self, start: int = 12345, end: int = 12400):
         """
         Initialize port pool.
 

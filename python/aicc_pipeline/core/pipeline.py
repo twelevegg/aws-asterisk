@@ -320,15 +320,15 @@ class AICCPipeline:
             event = TurnEvent(
                 type="metadata_start",
                 call_id=self._call_id,
-                customer_number="incoming",
-                agent_id="agent01",
+                customer_number=self.config.customer_number or "unknown",
+                agent_id=self.config.agent_id or "unknown",
             )
             _safe_task(self._ws_manager.send(event), "send_metadata_start")
 
     async def start(self):
         """Start the pipeline."""
         self._running = True
-        self._call_id = str(uuid4())
+        self._call_id = self.config.call_id or str(uuid4())
         self._start_time = time.time()
 
         logger.info("=" * 60)

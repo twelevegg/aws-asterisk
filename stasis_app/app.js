@@ -18,11 +18,116 @@ const ARI_URL = process.env.ARI_URL || 'http://127.0.0.1:8088/ari';
 const ARI_USERNAME = process.env.ARI_USERNAME || 'asterisk';
 const ARI_PASSWORD = process.env.ARI_PASSWORD;  // Required - no default
 const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
-const CUSTOMER_PORT = process.env.CUSTOMER_PORT || '12345';
-const AGENT_PORT = process.env.AGENT_PORT || '12346';
 const STASIS_APP_NAME = 'linphone-handler';
-const AGENT_ENDPOINT = process.env.AGENT_ENDPOINT || 'PJSIP/agent02';
 const DIAL_TIMEOUT = 30; // seconds
+
+// AgentRouter - Round-Robin agent selection
+class AgentRouter {
+    constructor() {
+        this.agents = [
+            { id: 'agent01', endpoint: 'PJSIP/agent01', status: 'available' },
+            { id: 'agent02', endpoint: 'PJSIP/agent02', status: 'available' },
+            { id: 'agent03', endpoint: 'PJSIP/agent03', status: 'available' },
+            { id: 'agent04', endpoint: 'PJSIP/agent04', status: 'available' },
+            { id: 'agent05', endpoint: 'PJSIP/agent05', status: 'available' },
+            { id: 'agent06', endpoint: 'PJSIP/agent06', status: 'available' }
+        ];
+        this.currentIndex = 0;
+    }
+
+    getNextAvailable() {
+        let attempts = 0;
+
+        while (attempts < this.agents.length) {
+            const agent = this.agents[this.currentIndex];
+            this.currentIndex = (this.currentIndex + 1) % this.agents.length;
+
+            if (agent.status === 'available') {
+                agent.status = 'busy';
+                return agent;
+            }
+
+            attempts++;
+        }
+
+        // If all busy, return null
+        console.log('[WARN] All agents busy');
+        return null;
+    }
+
+    setAgentStatus(agentId, status) {
+        const agent = this.agents.find(a => a.id === agentId);
+        if (agent) {
+            agent.status = status;
+            console.log(`[AgentRouter] ${agentId} status: ${status}`);
+        }
+    }
+
+    getAgentById(agentId) {
+        return this.agents.find(a => a.id === agentId);
+    }
+
+    isAgentChannel(channelName) {
+        return this.agents.some(agent => channelName.includes(agent.id));
+    }
+
+    getAgentIdFromChannel(channelName) {
+        const agent = this.agents.find(a => channelName.includes(a.id));
+        return agent ? agent.id : null;
+    }
+}
+
+// PortPool - Dynamic port allocation
+class PortPool {
+    constructor(basePort = 12345, maxPort = 12400) {
+        this.basePort = basePort;
+        this.maxPort = maxPort;
+        this.allocatedPorts = new Set();
+    }
+
+    allocate() {
+        let customerPort = null;
+        let agentPort = null;
+
+        // Find two consecutive available ports
+        for (let port = this.basePort; port < this.maxPort - 1; port += 2) {
+            if (!this.allocatedPorts.has(port) && !this.allocatedPorts.has(port + 1)) {
+                customerPort = port;
+                agentPort = port + 1;
+                break;
+            }
+        }
+
+        if (!customerPort) {
+            throw new Error('No available ports in pool');
+        }
+
+        this.allocatedPorts.add(customerPort);
+        this.allocatedPorts.add(agentPort);
+
+        return { customer: customerPort, agent: agentPort };
+    }
+
+    release(ports) {
+        if (ports.customer) {
+            this.allocatedPorts.delete(ports.customer);
+        }
+        if (ports.agent) {
+            this.allocatedPorts.delete(ports.agent);
+        }
+    }
+
+    getStats() {
+        return {
+            allocated: this.allocatedPorts.size,
+            available: (this.maxPort - this.basePort) - this.allocatedPorts.size
+        };
+    }
+}
+
+// Initialize global instances
+const agentRouter = new AgentRouter();
+const portPool = new PortPool();
 
 // Validate required environment variables
 if (!ARI_PASSWORD) {
@@ -32,12 +137,11 @@ if (!ARI_PASSWORD) {
 }
 
 console.log('='.repeat(60));
-console.log('AICC Stasis App - Dual Snoop with Agent Dial');
+console.log('AICC Stasis App - Dual Snoop with Round-Robin');
 console.log('='.repeat(60));
 console.log(`ARI URL: ${ARI_URL}`);
-console.log(`Customer audio → UDP:${CUSTOMER_PORT}`);
-console.log(`Agent audio → UDP:${AGENT_PORT}`);
-console.log(`Agent endpoint: ${AGENT_ENDPOINT}`);
+console.log(`Port pool: ${portPool.basePort} - ${portPool.maxPort}`);
+console.log(`Agents: ${agentRouter.agents.map(a => a.id).join(', ')}`);
 console.log('='.repeat(60));
 
 // Track active calls
@@ -60,8 +164,9 @@ async function main() {
             }
 
             // Skip agent channel (will be handled separately)
-            if (channelName.includes('agent02')) {
-                console.log(`[DEBUG] Agent channel joined: ${channelName}`);
+            if (agentRouter.isAgentChannel(channelName)) {
+                const agentId = agentRouter.getAgentIdFromChannel(channelName);
+                console.log(`[DEBUG] Agent channel joined: ${channelName} (${agentId})`);
                 return;
             }
 
@@ -78,21 +183,38 @@ async function main() {
                 await channel.answer();
                 console.log(`[${callId}] Customer channel answered`);
 
-                // 2. Create main bridge for customer <-> agent
+                // 2. Allocate ports for this call
+                const ports = portPool.allocate();
+                console.log(`[${callId}] Allocated ports - Customer: ${ports.customer}, Agent: ${ports.agent}`);
+
+                // 3. Select next available agent
+                const agent = agentRouter.getNextAvailable();
+
+                // If all agents busy, reject the call
+                if (!agent) {
+                    console.log(`[${callId}] No available agents - rejecting call`);
+                    portPool.release(ports);
+                    await channel.hangup();
+                    return;
+                }
+
+                console.log(`[${callId}] Selected agent: ${agent.id} (${agent.endpoint})`);
+
+                // 4. Create main bridge for customer <-> agent
                 const mainBridge = await client.bridges.create({
                     type: 'mixing',
                     name: `main_${callId}`
                 });
                 console.log(`[${callId}] Main bridge created: ${mainBridge.id}`);
 
-                // 3. Add customer to main bridge
+                // 5. Add customer to main bridge
                 await mainBridge.addChannel({ channel: channel.id });
                 console.log(`[${callId}] Customer added to bridge`);
 
-                // 4. Dial agent02
-                console.log(`[${callId}] Dialing ${AGENT_ENDPOINT}...`);
+                // 6. Dial selected agent
+                console.log(`[${callId}] Dialing ${agent.endpoint}...`);
                 const agentChannel = await client.channels.originate({
-                    endpoint: AGENT_ENDPOINT,
+                    endpoint: agent.endpoint,
                     app: STASIS_APP_NAME,
                     appArgs: `dialed_${callId}`,
                     callerId: callerNumber,
@@ -108,44 +230,63 @@ async function main() {
                     customerChannel: channel.id,
                     agentChannel: agentChannel.id,
                     mainBridge: mainBridge.id,
+                    agentId: agent.id,
+                    ports: ports,
                     resources: []
                 };
                 activeCalls.set(channel.id, callData);
                 activeCalls.set(agentChannel.id, callData); // Also index by agent channel
 
-                // 5. Wait for agent to answer, then setup snoop
+                // 7. Wait for agent to answer, then setup snoop
                 agentChannel.on('StasisStart', async () => {
-                    console.log(`[${callId}] Agent answered!`);
+                    console.log(`[${callId}] Agent ${agent.id} answered!`);
 
                     try {
                         // Add agent to main bridge
                         await mainBridge.addChannel({ channel: agentChannel.id });
                         console.log(`[${callId}] Agent added to bridge - Call connected!`);
 
-                        // 6. Setup Dual Snoop for audio separation
+                        // 8. Setup Dual Snoop for audio separation
                         await setupDualSnoop(client, channel, callData);
 
                     } catch (err) {
                         console.error(`[${callId}] Error setting up call:`, err.message);
+                        // Release agent and ports on error
+                        agentRouter.setAgentStatus(agent.id, 'available');
+                        portPool.release(ports);
                     }
                 });
 
                 // Handle agent channel end
                 agentChannel.on('StasisEnd', () => {
-                    console.log(`[${callId}] Agent hung up`);
+                    console.log(`[${callId}] Agent ${agent.id} hung up`);
+                    agentRouter.setAgentStatus(agent.id, 'available');
                     cleanup(client, callData);
                 });
 
                 // Handle agent dial failure
                 agentChannel.on('ChannelDestroyed', () => {
                     if (!callData.connected) {
-                        console.log(`[${callId}] Agent did not answer`);
+                        console.log(`[${callId}] Agent ${agent.id} did not answer`);
+                        agentRouter.setAgentStatus(agent.id, 'available');
                         cleanup(client, callData);
                     }
                 });
 
             } catch (err) {
                 console.error(`[${callId}] Error:`, err.message);
+
+                // Get callData to cleanup properly
+                const callData = activeCalls.get(channel.id);
+                if (callData) {
+                    if (callData.agentId) {
+                        agentRouter.setAgentStatus(callData.agentId, 'available');
+                    }
+                    if (callData.ports) {
+                        portPool.release(callData.ports);
+                    }
+                }
+
                 try {
                     await channel.hangup();
                 } catch (e) {
@@ -173,7 +314,7 @@ async function main() {
 }
 
 async function setupDualSnoop(client, customerChannel, callData) {
-    const { callId } = callData;
+    const { callId, ports } = callData;
 
     try {
         // Snoop for Customer audio (what customer says - 'in' direction)
@@ -192,7 +333,7 @@ async function setupDualSnoop(client, customerChannel, callData) {
 
         const customerExternal = await client.channels.externalMedia({
             app: STASIS_APP_NAME,
-            external_host: `${EXTERNAL_HOST}:${CUSTOMER_PORT}`,
+            external_host: `${EXTERNAL_HOST}:${ports.customer}`,
             format: 'ulaw',
             encapsulation: 'rtp',
             transport: 'udp',
@@ -203,7 +344,7 @@ async function setupDualSnoop(client, customerChannel, callData) {
 
         await customerBridge.addChannel({ channel: customerSnoop.id });
         await customerBridge.addChannel({ channel: customerExternal.id });
-        console.log(`[${callId}] Customer audio → UDP:${CUSTOMER_PORT}`);
+        console.log(`[${callId}] Customer audio → UDP:${ports.customer}`);
 
         // Snoop for Agent audio (what agent says - 'out' direction)
         const agentSnoop = await client.channels.snoopChannel({
@@ -221,7 +362,7 @@ async function setupDualSnoop(client, customerChannel, callData) {
 
         const agentExternal = await client.channels.externalMedia({
             app: STASIS_APP_NAME,
-            external_host: `${EXTERNAL_HOST}:${AGENT_PORT}`,
+            external_host: `${EXTERNAL_HOST}:${ports.agent}`,
             format: 'ulaw',
             encapsulation: 'rtp',
             transport: 'udp',
@@ -232,7 +373,7 @@ async function setupDualSnoop(client, customerChannel, callData) {
 
         await agentBridge.addChannel({ channel: agentSnoop.id });
         await agentBridge.addChannel({ channel: agentExternal.id });
-        console.log(`[${callId}] Agent audio → UDP:${AGENT_PORT}`);
+        console.log(`[${callId}] Agent audio → UDP:${ports.agent}`);
 
         callData.connected = true;
         console.log(`[${callId}] Dual Snoop active - Audio separation enabled`);
@@ -246,8 +387,20 @@ async function cleanup(client, callData) {
     if (!callData || callData.cleaned) return;
     callData.cleaned = true;
 
-    const { callId } = callData;
+    const { callId, agentId, ports } = callData;
     console.log(`[${callId}] Cleaning up resources...`);
+
+    // Release agent back to available pool
+    if (agentId) {
+        agentRouter.setAgentStatus(agentId, 'available');
+    }
+
+    // Release ports back to pool
+    if (ports) {
+        portPool.release(ports);
+        const stats = portPool.getStats();
+        console.log(`[${callId}] Ports released - Pool stats: ${stats.allocated} allocated, ${stats.available} available`);
+    }
 
     // Cleanup resources in reverse order
     for (const resource of callData.resources.reverse()) {

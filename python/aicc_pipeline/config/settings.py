@@ -49,6 +49,11 @@ class PipelineConfig:
         default_factory=lambda: int(os.getenv("AICC_AGENT_PORT", "12346"))
     )
 
+    # Dynamic call info (set per-call, not from env)
+    call_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    customer_number: Optional[str] = None
+
     # Audio settings
     sample_rate: int = 8000  # ulaw is 8kHz
     target_sample_rate: int = 16000  # For STT
