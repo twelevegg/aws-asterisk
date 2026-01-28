@@ -16,7 +16,7 @@ const { v4: uuidv4 } = require('uuid');
 // Configuration
 const ARI_URL = process.env.ARI_URL || 'http://127.0.0.1:8088/ari';
 const ARI_USERNAME = process.env.ARI_USERNAME || 'asterisk';
-const ARI_PASSWORD = process.env.ARI_PASSWORD;  // Required - no default
+const ARI_PASSWORD = process.env.ARI_PASSWORD || 'asterisk_dev_only';
 const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
 const STASIS_APP_NAME = 'linphone-handler';
 const DIAL_TIMEOUT = 30; // seconds
@@ -152,11 +152,10 @@ class PortPool {
 let agentRouter = null;
 const portPool = new PortPool();
 
-// Validate required environment variables
-if (!ARI_PASSWORD) {
-    console.error('FATAL: ARI_PASSWORD environment variable is required');
-    console.error('Set it with: export ARI_PASSWORD=your_secure_password');
-    process.exit(1);
+// Warn if using default password
+if (!process.env.ARI_PASSWORD) {
+    console.warn('[WARN] ARI_PASSWORD not set, using default: asterisk_dev_only');
+    console.warn('[WARN] For production, set with: export ARI_PASSWORD=your_secure_password');
 }
 
 console.log('='.repeat(60));
