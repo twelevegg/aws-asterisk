@@ -7,10 +7,10 @@ Provides async STT using executor to avoid blocking.
 import asyncio
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
 logger = logging.getLogger("aicc.stt")
 
@@ -64,6 +64,7 @@ class GoogleCloudSTT:
         self._recognizer: Optional[str] = None
         self._buffer: List[bytes] = []
         self._executor = ThreadPoolExecutor(max_workers=2)
+        self._pending_futures: Set[Future] = set()
 
         if GOOGLE_STT_AVAILABLE:
             self._init_client()
@@ -106,6 +107,23 @@ class GoogleCloudSTT:
     def clear(self):
         """Clear audio buffer."""
         self._buffer = []
+
+    def _submit_task(self, fn, *args, **kwargs) -> Future:
+        """
+        Submit task and track the future.
+
+        Args:
+            fn: Function to execute
+            *args: Positional arguments
+            **kwargs: Keyword arguments
+
+        Returns:
+            Future object
+        """
+        future = self._executor.submit(fn, *args, **kwargs)
+        self._pending_futures.add(future)
+        future.add_done_callback(self._pending_futures.discard)
+        return future
 
     def _sync_transcribe(self, audio_data: bytes) -> TranscriptResult:
         """
@@ -180,11 +198,8 @@ class GoogleCloudSTT:
             return TranscriptResult(text="", is_final=True)
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            self._executor,
-            self._sync_transcribe,
-            audio_bytes
-        )
+        future = self._submit_task(self._sync_transcribe, audio_bytes)
+        result = await asyncio.wrap_future(future)
         return result
 
     def get_transcript(self) -> str:
@@ -202,6 +217,27 @@ class GoogleCloudSTT:
         result = self._sync_transcribe(audio_data)
         return result.text
 
-    def shutdown(self):
-        """Shutdown executor."""
-        self._executor.shutdown(wait=False)
+    def shutdown(self, timeout: float = 10.0):
+        """
+        Graceful shutdown with timeout.
+
+        Args:
+            timeout: Maximum time to wait for pending tasks (seconds)
+        """
+        if self._pending_futures:
+            logger.info(f"Waiting for {len(self._pending_futures)} pending STT tasks...")
+            done, pending = wait(self._pending_futures, timeout=timeout)
+            if pending:
+                logger.warning(f"{len(pending)} STT tasks cancelled during shutdown")
+
+        self._executor.shutdown(wait=True)
+        logger.info("GoogleCloudSTT shutdown complete")
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        self.shutdown()
+        return False

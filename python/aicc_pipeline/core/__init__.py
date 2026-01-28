@@ -4,6 +4,7 @@ from .pipeline import AICCPipeline, TurnEvent
 from .task_registry import TaskRegistry, safe_task, get_default_registry
 from .call_session import CallSession
 from .port_pool import PortPool
+from .async_udp_receiver import AsyncUDPReceiver, UDPProtocol
 
 __all__ = [
     "UDPReceiver",
@@ -14,4 +15,6 @@ __all__ = [
     "get_default_registry",
     "CallSession",
     "PortPool",
+    "AsyncUDPReceiver",
+    "UDPProtocol",
 ]

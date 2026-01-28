@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from websockets.legacy.client import WebSocketClientProtocol
+    from .auth import WebSocketAuth
 
 logger = logging.getLogger("aicc.websocket")
 
@@ -62,7 +63,8 @@ class WebSocketManager:
         queue_maxsize: int = 1000,
         reconnect_interval: float = 5.0,
         ping_interval: float = 20.0,
-        ping_timeout: float = 10.0
+        ping_timeout: float = 10.0,
+        auth: Optional["WebSocketAuth"] = None
     ):
         """
         Initialize WebSocket manager.
@@ -73,6 +75,7 @@ class WebSocketManager:
             reconnect_interval: Seconds between reconnection attempts
             ping_interval: WebSocket ping interval
             ping_timeout: WebSocket ping timeout
+            auth: Optional WebSocketAuth instance for JWT authentication
         """
         if not WEBSOCKETS_AVAILABLE:
             raise ImportError("websockets not available. pip install websockets")
@@ -82,6 +85,7 @@ class WebSocketManager:
         self.reconnect_interval = reconnect_interval
         self.ping_interval = ping_interval
         self.ping_timeout = ping_timeout
+        self.auth = auth
 
         self._connections: Dict[str, Any] = {}  # WebSocket connections
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
@@ -127,10 +131,18 @@ class WebSocketManager:
         """
         try:
             logger.info(f"Connecting to: {url}")
+
+            # Get auth headers if authentication is enabled
+            extra_headers = None
+            if self.auth:
+                extra_headers = self.auth.get_auth_headers()
+                logger.debug(f"Using JWT authentication for {url}")
+
             ws = await websockets.connect(
                 url,
                 ping_interval=self.ping_interval,
-                ping_timeout=self.ping_timeout
+                ping_timeout=self.ping_timeout,
+                extra_headers=extra_headers
             )
             self._connections[url] = ws
             logger.info(f"Connected: {url}")

@@ -7,7 +7,7 @@ Handles async UDP socket operations for receiving RTP packets.
 import asyncio
 import logging
 import socket
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from ..audio import RTPPacket, AudioConverter
 
@@ -26,7 +26,8 @@ class UDPReceiver:
         port: int,
         speaker: str,
         on_audio: Callable[[bytes, str], None],
-        on_first_packet: Optional[Callable[[str], None]] = None
+        on_first_packet: Optional[Callable[[str], None]] = None,
+        allowed_sources: Optional[List[str]] = None,
     ):
         """
         Initialize UDP receiver.
@@ -36,17 +37,20 @@ class UDPReceiver:
             speaker: Speaker identifier ("customer" or "agent")
             on_audio: Callback for processed PCM audio (pcm_bytes, speaker)
             on_first_packet: Optional callback for first packet received
+            allowed_sources: Optional list of allowed source IPs. If None, all sources allowed.
         """
         self.port = port
         self.speaker = speaker
         self.on_audio = on_audio
         self.on_first_packet = on_first_packet
+        self.allowed_sources = set(allowed_sources) if allowed_sources else None
 
         self._socket: Optional[socket.socket] = None
         self._running = False
         self._first_packet_received = False
         self._packet_count = 0
         self._error_count = 0
+        self._rejected_count = 0
 
     @property
     def packet_count(self) -> int:
@@ -58,6 +62,11 @@ class UDPReceiver:
         """Number of parse errors."""
         return self._error_count
 
+    @property
+    def rejected_count(self) -> int:
+        """Number of rejected packets (unauthorized source)."""
+        return self._rejected_count
+
     def _create_socket(self) -> socket.socket:
         """Create and configure UDP socket."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -66,6 +75,25 @@ class UDPReceiver:
         sock.setblocking(False)
         return sock
 
+    def _validate_source(self, addr: tuple) -> bool:
+        """
+        Validate source IP is allowed.
+
+        Args:
+            addr: Tuple of (source_ip, source_port)
+
+        Returns:
+            True if source is allowed, False otherwise
+        """
+        if self.allowed_sources is None:
+            return True  # No whitelist = allow all
+        source_ip = addr[0]
+        if source_ip not in self.allowed_sources:
+            logger.warning(f"Rejected packet from unauthorized source: {source_ip}")
+            self._rejected_count += 1
+            return False
+        return True
+
     async def start(self):
         """Start receiving UDP packets."""
         self._socket = self._create_socket()
@@ -73,12 +101,18 @@ class UDPReceiver:
         self._first_packet_received = False
 
         logger.info(f"Listening on UDP:{self.port} ({self.speaker})")
+        if self.allowed_sources:
+            logger.info(f"Source whitelist enabled: {self.allowed_sources}")
 
         loop = asyncio.get_event_loop()
 
         while self._running:
             try:
-                data = await loop.sock_recv(self._socket, 2048)
+                data, addr = await loop.sock_recvfrom(self._socket, 2048)
+
+                # Validate source IP
+                if not self._validate_source(addr):
+                    continue
 
                 # First packet callback
                 if not self._first_packet_received:
@@ -130,4 +164,6 @@ class UDPReceiver:
             "port": self.port,
             "packets": self._packet_count,
             "errors": self._error_count,
+            "rejected": self._rejected_count,
+            "whitelist_enabled": self.allowed_sources is not None,
         }
