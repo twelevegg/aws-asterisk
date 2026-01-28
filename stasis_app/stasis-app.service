@@ -14,7 +14,7 @@ Environment="NODE_ENV=production"
 Environment="ARI_HOST=127.0.0.1"
 Environment="ARI_PORT=8088"
 Environment="ARI_USERNAME=asterisk"
-Environment="ARI_PASSWORD=asterisk_dev_only"
+EnvironmentFile=/etc/stasis-app/secrets.env
 
 # ExternalMedia settings
 Environment="EXTERNAL_HOST=127.0.0.1"

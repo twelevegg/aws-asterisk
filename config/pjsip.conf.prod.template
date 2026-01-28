@@ -2,6 +2,7 @@
 ; Asterisk PJSIP Configuration for Linphone.org SIP Account
 ; Account: youngho@sip.linphone.org
 ; Target: AWS EC2 with NAT
+; Environment: PRODUCTION (debug=no)
 ; =============================================================================
 
 ; System section (required for sorcery)
@@ -10,7 +11,7 @@ type=system
 
 [global]
 type=global
-debug=yes
+debug=no
 
 ; =============================================================================
 ; Transport - UDP with NAT settings for AWS EC2
@@ -20,9 +21,9 @@ type=transport
 protocol=udp
 bind=0.0.0.0:5060
 ; NAT Settings - MUST update these for your EC2 instance
-external_media_address=3.36.250.255       ; EC2 Elastic IP
-external_signaling_address=3.36.250.255   ; EC2 Elastic IP
-local_net=172.31.0.0/16                   ; AWS VPC CIDR
+external_media_address=${EC2_PUBLIC_IP}       ; EC2 Elastic IP
+external_signaling_address=${EC2_PUBLIC_IP}   ; EC2 Elastic IP
+local_net=${VPC_CIDR}                         ; AWS VPC CIDR
 
 ; =============================================================================
 ; Transport - TLS for encrypted SIP signaling
@@ -36,9 +37,9 @@ priv_key_file=/etc/asterisk/certs/asterisk.key
 ca_list_file=/etc/asterisk/certs/ca.pem
 method=tlsv1_2
 ; NAT Settings
-external_media_address=3.36.250.255
-external_signaling_address=3.36.250.255
-local_net=172.31.0.0/16
+external_media_address=${EC2_PUBLIC_IP}
+external_signaling_address=${EC2_PUBLIC_IP}
+local_net=${VPC_CIDR}
 
 ; =============================================================================
 ; Linphone.org Registration - Asterisk registers as youngho@sip.linphone.org

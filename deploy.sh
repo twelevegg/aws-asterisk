@@ -161,12 +161,12 @@ backup_configs() {
 deploy_configs() {
     print_header "Deploying Asterisk Configurations"
 
-    # Deploy pjsip.conf with variable substitution
+    # Deploy pjsip.conf with variable substitution using envsubst
     print_info "Deploying pjsip.conf..."
-    sed -e "s/__LINPHONE_PASSWORD__/${LINPHONE_PASSWORD}/g" \
-        -e "s/13.209.97.212/${EC2_PUBLIC_IP}/g" \
-        -e "s|172.31.0.0/16|${VPC_CIDR}|g" \
-        "${CONFIG_DIR}/pjsip.conf" > "${ASTERISK_CONFIG_DIR}/pjsip.conf"
+    export LINPHONE_PASSWORD EC2_PUBLIC_IP VPC_CIDR
+    envsubst '${LINPHONE_PASSWORD} ${EC2_PUBLIC_IP} ${VPC_CIDR}' \
+        < "${CONFIG_DIR}/pjsip.conf.template" \
+        > "${ASTERISK_CONFIG_DIR}/pjsip.conf"
 
     # Deploy other configs as-is
     for conf in extensions.conf rtp.conf ari.conf http.conf; do

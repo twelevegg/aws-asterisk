@@ -7,7 +7,7 @@
  * Environment Variables:
  *   ARI_URL          - ARI endpoint (default: http://127.0.0.1:8088/ari)
  *   ARI_USERNAME     - ARI username (default: asterisk)
- *   ARI_PASSWORD     - ARI password (default: asterisk)
+ *   ARI_PASSWORD     - ARI password (REQUIRED - no default)
  *   EXTERNAL_HOST    - External media host (default: 127.0.0.1)
  *   CUSTOMER_PORT    - Customer audio UDP port (default: 12345)
  *   AGENT_PORT       - Agent audio UDP port (default: 12346)
@@ -19,7 +19,12 @@ const { v4: uuidv4 } = require('uuid');
 // Configuration from environment variables with defaults
 const ARI_URL = process.env.ARI_URL || 'http://127.0.0.1:8088/ari';
 const ARI_USERNAME = process.env.ARI_USERNAME || 'asterisk';
-const ARI_PASSWORD = process.env.ARI_PASSWORD || 'asterisk';
+const ARI_PASSWORD = process.env.ARI_PASSWORD;
+if (!ARI_PASSWORD) {
+    console.error('[FATAL] ARI_PASSWORD environment variable is required');
+    console.error('[FATAL] Set via: export ARI_PASSWORD=xxx');
+    process.exit(1);
+}
 const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
 const CUSTOMER_PORT = process.env.CUSTOMER_PORT || '12345';
 const AGENT_PORT = process.env.AGENT_PORT || '12346';

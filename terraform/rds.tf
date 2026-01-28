@@ -49,8 +49,9 @@ resource "aws_db_instance" "asterisk_mysql" {
   performance_insights_enabled = false
 
   # Deletion Protection (프로덕션에서는 true 권장)
-  deletion_protection = false
-  skip_final_snapshot = true
+  deletion_protection = true
+  skip_final_snapshot = false
+  final_snapshot_identifier = "asterisk-db-final-snapshot"
 
   # Parameter Group (기본 사용)
   parameter_group_name = "default.mysql8.0"

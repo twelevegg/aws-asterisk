@@ -41,3 +41,16 @@ resource "aws_security_group_rule" "linphone_sip_ingress" {
   description       = "SIP: Linphone.org servers"
   security_group_id = var.ec2_security_group_id
 }
+
+# SIP over TLS (TCP 5061) - 특정 IP만 허용
+resource "aws_security_group_rule" "sip_tls_ingress" {
+  for_each = { for idx, ip in var.sip_allowed_ips : idx => ip }
+
+  type              = "ingress"
+  from_port         = 5061
+  to_port           = 5061
+  protocol          = "tcp"
+  cidr_blocks       = [each.value.cidr]
+  description       = "SIP over TLS: ${each.value.description}"
+  security_group_id = var.ec2_security_group_id
+}

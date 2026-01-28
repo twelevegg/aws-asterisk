@@ -13,11 +13,14 @@ jobs:
         env:
           AICC_WS_URL: ${{ secrets.AICC_WS_URL }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          LINPHONE_PASSWORD: ${{ secrets.LINPHONE_PASSWORD }}
+          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
+          VPC_CIDR: ${{ secrets.VPC_CIDR }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: AICC_WS_URL,DB_PASSWORD
+          envs: AICC_WS_URL,DB_PASSWORD,LINPHONE_PASSWORD,EC2_PUBLIC_IP,VPC_CIDR
           script: |
             set -e
             echo "=== Starting deployment ==="
@@ -37,7 +40,35 @@ jobs:
 
             # 2. Deploy Asterisk configurations
             echo "=== Deploying Asterisk configs ==="
-            sudo cp config/pjsip.conf /etc/asterisk/pjsip.conf
+
+            # Determine environment based on branch
+            ENVIRONMENT="${ENVIRONMENT:-production}"
+            if [ "$GITHUB_REF" = "refs/heads/develop" ] || [ "$GITHUB_REF" = "refs/heads/dev" ]; then
+              ENVIRONMENT="development"
+            fi
+            echo "Deploying to environment: $ENVIRONMENT"
+
+            # Select pjsip.conf template based on environment
+            if [ "$ENVIRONMENT" = "production" ]; then
+              PJSIP_TEMPLATE="config/pjsip.conf.prod.template"
+            else
+              PJSIP_TEMPLATE="config/pjsip.conf.dev.template"
+            fi
+
+            # Deploy pjsip.conf with environment variables
+            if [ -n "$LINPHONE_PASSWORD" ] && [ -n "$EC2_PUBLIC_IP" ] && [ -n "$VPC_CIDR" ]; then
+              export LINPHONE_PASSWORD EC2_PUBLIC_IP VPC_CIDR
+              envsubst '${LINPHONE_PASSWORD} ${EC2_PUBLIC_IP} ${VPC_CIDR}' \
+                < "$PJSIP_TEMPLATE" \
+                | sudo tee /etc/asterisk/pjsip.conf > /dev/null
+              echo "pjsip.conf deployed from $PJSIP_TEMPLATE"
+            else
+              echo "ERROR: Required environment variables not set for pjsip.conf"
+              echo "Required: LINPHONE_PASSWORD, EC2_PUBLIC_IP, VPC_CIDR"
+              exit 1
+            fi
+
+            # Deploy other configs
             sudo cp config/rtp.conf /etc/asterisk/rtp.conf
             sudo cp config/extensions.conf /etc/asterisk/extensions.conf
             sudo cp config/ari.conf /etc/asterisk/ari.conf
@@ -45,12 +76,13 @@ jobs:
             sudo cp config/extconfig.conf /etc/asterisk/extconfig.conf
             sudo cp config/sorcery.conf /etc/asterisk/sorcery.conf
 
-            # Deploy res_odbc.conf with DB password
+            # Deploy res_odbc.conf with DB password using envsubst
             if [ -n "$DB_PASSWORD" ]; then
-              sed "s|__DB_PASSWORD__|$DB_PASSWORD|g" config/res_odbc.conf | sudo tee /etc/asterisk/res_odbc.conf > /dev/null
+              export DB_PASSWORD
+              envsubst '${DB_PASSWORD}' < config/res_odbc.conf.template | sudo tee /etc/asterisk/res_odbc.conf > /dev/null
               echo "res_odbc.conf deployed with DB password"
             else
-              sudo cp config/res_odbc.conf /etc/asterisk/res_odbc.conf
+              sudo cp config/res_odbc.conf.template /etc/asterisk/res_odbc.conf
               echo "WARNING: DB_PASSWORD not set, using placeholder"
             fi
 
