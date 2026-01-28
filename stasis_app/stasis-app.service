@@ -1,0 +1,39 @@
+[Unit]
+Description=Stasis App (Node.js) - Asterisk ARI Application
+After=network.target asterisk.service
+Requires=asterisk.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/aws_asterisk/stasis_app
+
+# Environment variables
+Environment="NODE_ENV=production"
+Environment="ARI_HOST=127.0.0.1"
+Environment="ARI_PORT=8088"
+Environment="ARI_USERNAME=asterisk"
+Environment="ARI_PASSWORD=asterisk_dev_only"
+
+# ExternalMedia settings
+Environment="EXTERNAL_HOST=127.0.0.1"
+Environment="CUSTOMER_PORT=12345"
+Environment="AGENT_PORT=12346"
+
+# Start command
+ExecStart=/usr/bin/node app.js
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stasis-app
+
+[Install]
+WantedBy=multi-user.target

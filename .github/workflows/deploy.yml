@@ -71,9 +71,14 @@ jobs:
             cd ~/aws_asterisk/stasis_app
             npm install --production
 
-            # 5. Restart Stasis App
-            echo "=== Restarting Stasis App ==="
+            # 5. Deploy and restart Stasis App
+            echo "=== Deploying Stasis App service ==="
+            sudo cp ~/aws_asterisk/stasis_app/stasis-app.service /etc/systemd/system/stasis-app.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable stasis-app
             sudo systemctl restart stasis-app
+            sleep 3
+            sudo systemctl status stasis-app --no-pager || true
 
             # 6. Verify deployment
             echo "=== Verifying deployment ==="
