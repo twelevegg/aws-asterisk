@@ -29,7 +29,7 @@ jobs:
             sudo cp config/extensions.conf /etc/asterisk/extensions.conf
             sudo cp config/ari.conf /etc/asterisk/ari.conf
             sudo cp config/http.conf /etc/asterisk/http.conf
-            sudo chown asterisk:asterisk /etc/asterisk/*.conf
+            sudo chown asterisk:asterisk /etc/asterisk/*.conf 2>/dev/null || sudo chown root:root /etc/asterisk/*.conf
             sudo chmod 640 /etc/asterisk/pjsip.conf
 
             # 3. Reload Asterisk
