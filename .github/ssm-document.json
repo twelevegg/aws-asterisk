@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Deploy Stasis App from GitHub",
+  "parameters": {
+    "branch": {
+      "type": "String",
+      "default": "main",
+      "description": "Git branch to deploy"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "deploy",
+      "inputs": {
+        "runCommand": [
+          "cd /home/ubuntu/aws-asterisk",
+          "git fetch origin",
+          "git checkout {{ branch }}",
+          "git pull origin {{ branch }}",
+          "docker-compose down",
+          "docker-compose up -d --build",
+          "docker-compose ps"
+        ]
+      }
+    }
+  ]
+}
