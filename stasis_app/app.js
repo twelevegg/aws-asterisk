@@ -1,13 +1,15 @@
 /**
- * AICC Stasis App - Dual Snoop with Agent Dial
+ * AICC Stasis App - Dual Snoop with Sequential Agent Selection
  *
  * Flow:
  * 1. Customer calls youngho@sip.linphone.org
- * 2. Asterisk answers and dials agent02
+ * 2. Asterisk answers and dials first available agent (agent01 → agent06)
  * 3. Both channels connected via bridge
  * 4. Dual Snoop separates audio:
  *    - Customer (in) → UDP:12345
  *    - Agent (out) → UDP:12346
+ *
+ * Agent Selection: Sequential (always tries agent01 first, then agent02, etc.)
  */
 
 const AriClient = require('ari-client');
@@ -26,7 +28,7 @@ const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
 const STASIS_APP_NAME = 'linphone-handler';
 const DIAL_TIMEOUT = 30; // seconds
 
-// AgentRouter - Round-Robin agent selection
+// AgentRouter - Sequential agent selection (agent01 → agent06)
 class AgentRouter {
     constructor(client) {
         this.client = client;
@@ -38,7 +40,6 @@ class AgentRouter {
             { id: 'agent05', endpoint: 'PJSIP/agent05', status: 'available' },
             { id: 'agent06', endpoint: 'PJSIP/agent06', status: 'available' }
         ];
-        this.currentIndex = 0;
     }
 
     async isEndpointAvailable(agentId) {
@@ -54,31 +55,28 @@ class AgentRouter {
     }
 
     async getNextAvailable() {
-        let attempts = 0;
-
-        while (attempts < this.agents.length) {
-            const agent = this.agents[this.currentIndex];
-            this.currentIndex = (this.currentIndex + 1) % this.agents.length;
-
-            // 내부 상태 체크
+        // 순차적으로 agent01부터 agent06까지 확인
+        for (const agent of this.agents) {
+            // 내부 상태 체크 (busy면 스킵)
             if (agent.status !== 'available') {
-                attempts++;
+                console.log(`[AgentRouter] ${agent.id} is busy, checking next...`);
                 continue;
             }
 
             // Asterisk 등록 상태 체크
             const isRegistered = await this.isEndpointAvailable(agent.id);
             if (!isRegistered) {
-                console.log(`[AgentRouter] ${agent.id} not registered, skipping`);
-                attempts++;
+                console.log(`[AgentRouter] ${agent.id} not registered, checking next...`);
                 continue;
             }
 
+            // 사용 가능한 agent 찾음
             agent.status = 'busy';
+            console.log(`[AgentRouter] Selected ${agent.id} (sequential)`);
             return agent;
         }
 
-        // If all busy or unavailable, return null
+        // 모든 agent 불가
         console.log('[WARN] All agents busy or unavailable');
         return null;
     }
@@ -158,7 +156,7 @@ let agentRouter = null;
 const portPool = new PortPool();
 
 console.log('='.repeat(60));
-console.log('AICC Stasis App - Dual Snoop with Round-Robin');
+console.log('AICC Stasis App - Dual Snoop with Sequential Agent Selection');
 console.log('='.repeat(60));
 const redactedUrl = ARI_URL.replace(/\/\/[^:]+:[^@]+@/, '//<credentials-redacted>@');
 console.log(`ARI URL: ${redactedUrl}`);

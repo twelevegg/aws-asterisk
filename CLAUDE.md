@@ -97,3 +97,116 @@ netstat -tlnp | grep 8088
 # WebSocket 연결 확인
 # aicc_pipeline.py의 ws_url 설정 확인
 ```
+
+---
+
+## AWS 인프라 정보
+
+| 리소스 | 값 |
+|--------|-----|
+| **EC2 Instance ID** | `i-064d4c32c1abb08df` |
+| **EC2 Public IP (Elastic IP)** | `3.36.250.255` |
+| **EC2 Private IP** | `172.31.35.142` |
+| **RDS Endpoint** | `asterisk-realtime-db.cvu6ye6s6u9k.ap-northeast-2.rds.amazonaws.com` |
+| **RDS Database** | `asterisk` |
+| **RDS Username** | `admin` |
+| **VPC CIDR** | `172.31.0.0/16` |
+
+## 세션 시작 체크리스트
+
+**Claude Code 세션 시작 시 반드시 아래 항목을 확인할 것:**
+
+### 1. EC2 서비스 상태 확인 (SSM으로)
+```bash
+# SSM 명령 실행 방법
+aws ssm send-command --instance-ids i-064d4c32c1abb08df \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["systemctl status asterisk --no-pager | head -5","systemctl status stasis-app --no-pager | head -5","systemctl status aicc-pipeline --no-pager | head -5"]' \
+  --output text --query "Command.CommandId"
+
+# 결과 확인 (CommandId로)
+aws ssm get-command-invocation --command-id <COMMAND_ID> --instance-id i-064d4c32c1abb08df
+```
+
+### 2. Asterisk 상태 확인
+```bash
+# Linphone 등록 상태
+asterisk -rx "pjsip show registrations"
+
+# Agent 등록 상태
+asterisk -rx "pjsip show endpoints" | head -30
+
+# ARI 앱 상태
+asterisk -rx "ari show apps"
+```
+
+### 3. 필수 확인 항목
+- [ ] Asterisk 프로세스 실행 중
+- [ ] Linphone 등록 상태 = `Registered`
+- [ ] Stasis App이 ARI에 연결됨
+- [ ] AICC Pipeline 실행 중
+
+## 현재 설정값 (2026-01-29 기준)
+
+### PJSIP Transport (NAT 설정)
+```ini
+[transport-udp]
+external_media_address=3.36.250.255
+external_signaling_address=3.36.250.255
+local_net=172.31.0.0/16
+```
+
+### SRTP 설정
+```ini
+# linphone-endpoint 및 모든 agent 동일
+media_encryption=sdes
+media_encryption_optimistic=yes
+```
+
+### ARI 인증
+```ini
+[asterisk]
+password=asterisk123
+```
+
+### WebSocket URL
+```
+ws://ec2-54-180-116-153.ap-northeast-2.compute.amazonaws.com:8080/api/v1/agent/check
+```
+
+## 리팩토링 규칙
+
+코드 수정 시 반드시 다음을 준수:
+
+1. **수정 전**: 현재 서비스 상태 확인
+2. **수정 후**: 서비스 재시작 및 동작 확인
+3. **설정 변경 시**:
+   - EC2의 `/etc/asterisk/` 파일 직접 수정
+   - `asterisk -rx "pjsip reload"` 또는 Asterisk 재시작
+   - RDS 변경 시 `pjsip reload`로 적용
+4. **테스트**: 실제 전화 연결로 검증
+
+## 알려진 이슈 및 제한사항
+
+### Opus 코덱 미지원
+- `codec_opus.so`가 설치되어 있지 않음 (libopus-dev 필요)
+- `res_format_attr_opus.so`는 SDP 협상만 처리, 실제 인코딩/디코딩 불가
+- **증상**: 통화 연결되나 **One-way audio** (한쪽만 들림)
+- **해결**: 모든 endpoint에서 opus 비활성화 (alaw, ulaw, gsm만 사용)
+
+### 허용 코덱 (현재 설정)
+| Endpoint | 코덱 |
+|----------|------|
+| linphone-endpoint | alaw, ulaw, gsm |
+| anonymous | alaw, ulaw, gsm |
+| agent01~06 (RDS) | g722, ulaw, alaw, gsm |
+
+## 빠른 상태 확인 명령어
+
+```bash
+# 전체 상태 한번에 확인 (SSM)
+aws ssm send-command --instance-ids i-064d4c32c1abb08df \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["echo === Services ===","systemctl is-active asterisk stasis-app aicc-pipeline","echo === Linphone ===","asterisk -rx pjsip\\ show\\ registrations","echo === Endpoints ===","asterisk -rx pjsip\\ show\\ endpoints | grep -E \"Endpoint:|Available|Unavailable\" | head -20"]' \
+  --output text --query "Command.CommandId"
+```
