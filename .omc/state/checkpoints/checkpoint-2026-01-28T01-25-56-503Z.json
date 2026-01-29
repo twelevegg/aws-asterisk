@@ -1,0 +1,15 @@
+{
+  "created_at": "2026-01-28T01:25:56.501Z",
+  "trigger": "auto",
+  "active_modes": {
+    "ultrawork": {
+      "original_prompt": "사용자는 youngho@sip.linphone.org로 전화하면 EC2 IP로 직접 들어오는게 맞습니다 근데 통화가 안됩니다 현재 인바운드와 아웃바운드 규칙을 확인하고 누구나 전화는 걸지만 다른 보안 문제는 발생하지 않도록 검토하세요 ultrawork!"
+    }
+  },
+  "todo_summary": {
+    "pending": 0,
+    "in_progress": 0,
+    "completed": 0
+  },
+  "wisdom_exported": false
+}

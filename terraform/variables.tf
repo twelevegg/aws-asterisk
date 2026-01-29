@@ -85,3 +85,13 @@ variable "rtp_allowed_ips" {
   }))
   default = []
 }
+
+# =============================================================================
+# Failover Architecture Variables
+# =============================================================================
+
+variable "key_name" {
+  description = "SSH key pair name for EC2 instances"
+  type        = string
+  default     = "asterisk-key"
+}

@@ -38,7 +38,7 @@ resource "aws_db_instance" "asterisk_mysql" {
   port                   = 3306
 
   # Availability
-  multi_az = false # 비용 절감, 필요 시 true로 변경
+  multi_az = true
 
   # Backup (프리티어 제한: 최대 1일)
   backup_retention_period = 1
@@ -47,6 +47,10 @@ resource "aws_db_instance" "asterisk_mysql" {
 
   # Performance Insights (프리티어에서는 비활성화)
   performance_insights_enabled = false
+
+  # Enhanced Monitoring (프리티어에서는 비활성화)
+  # monitoring_interval = 60
+  # monitoring_role_arn = aws_iam_role.rds_monitoring.arn
 
   # Deletion Protection (프로덕션에서는 true 권장)
   deletion_protection = true

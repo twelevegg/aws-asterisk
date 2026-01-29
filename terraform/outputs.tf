@@ -49,3 +49,27 @@ output "odbc_connection_info" {
     # password는 Secrets Manager에서 조회
   }
 }
+
+# =============================================================================
+# Failover Architecture Outputs
+# =============================================================================
+
+output "route53_health_check_id" {
+  description = "Route 53 health check ID"
+  value       = aws_route53_health_check.primary.id
+}
+
+output "sns_topic_arn" {
+  description = "SNS topic ARN for failover alerts"
+  value       = aws_sns_topic.asterisk_alerts.arn
+}
+
+output "lambda_function_arn" {
+  description = "Lambda failover function ARN"
+  value       = aws_lambda_function.failover.arn
+}
+
+output "elastic_ip" {
+  description = "Elastic IP used for failover"
+  value       = data.aws_eip.asterisk.public_ip
+}

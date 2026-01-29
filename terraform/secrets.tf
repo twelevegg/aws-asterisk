@@ -9,6 +9,11 @@ resource "random_password" "db_password" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
+resource "random_password" "ari_password" {
+  length  = 16
+  special = false
+}
+
 # Secrets Manager Secret
 resource "aws_secretsmanager_secret" "rds_credentials" {
   name        = "asterisk/rds/credentials"
@@ -25,11 +30,12 @@ resource "aws_secretsmanager_secret" "rds_credentials" {
 resource "aws_secretsmanager_secret_version" "rds_credentials" {
   secret_id = aws_secretsmanager_secret.rds_credentials.id
   secret_string = jsonencode({
-    username = var.db_username
-    password = random_password.db_password.result
-    host     = aws_db_instance.asterisk_mysql.address
-    port     = aws_db_instance.asterisk_mysql.port
-    database = var.db_name
+    username     = var.db_username
+    password     = random_password.db_password.result
+    host         = aws_db_instance.asterisk_mysql.address
+    port         = aws_db_instance.asterisk_mysql.port
+    database     = var.db_name
+    ari_password = random_password.ari_password.result
   })
 }
 

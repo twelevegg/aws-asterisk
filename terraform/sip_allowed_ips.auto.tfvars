@@ -23,6 +23,14 @@ sip_allowed_ips = [
     cidr        = "15.165.10.24/32"
     description = "SIP Server"
   },
+  {
+    cidr        = "183.109.77.118/32"
+    description = "Office Network"
+  },
+  {
+    cidr        = "192.168.56.1/32"
+    description = "VirtualBox Host"
+  },
 ]
 
 # RTP media (UDP 10000-20000) allowed IPs
@@ -38,5 +46,13 @@ rtp_allowed_ips = [
   {
     cidr        = "15.165.10.24/32"
     description = "SIP Server"
+  },
+  {
+    cidr        = "183.109.77.118/32"
+    description = "Office Network"
+  },
+  {
+    cidr        = "192.168.56.1/32"
+    description = "VirtualBox Host"
   },
 ]

@@ -1,0 +1,13 @@
+{
+  "active": false,
+  "goal_type": "custom",
+  "goal_pattern": "failover-architecture implementation verification",
+  "cycle": 1,
+  "max_cycles": 5,
+  "failures": [],
+  "started_at": "2026-01-29T10:00:00Z",
+  "completed_at": "2026-01-29T10:05:00Z",
+  "session_id": "ultraqa-failover-verification",
+  "result": "PASS",
+  "summary": "22/26 acceptance criteria met (85%). 4 pending criteria require post-deployment verification."
+}
