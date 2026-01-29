@@ -133,17 +133,29 @@ class WebSocketManager:
             logger.info(f"Connecting to: {url}")
 
             # Get auth headers if authentication is enabled
-            extra_headers = None
+            headers = None
             if self.auth:
-                extra_headers = self.auth.get_auth_headers()
+                headers = self.auth.get_auth_headers()
                 logger.debug(f"Using JWT authentication for {url}")
 
-            ws = await websockets.connect(
-                url,
-                ping_interval=self.ping_interval,
-                ping_timeout=self.ping_timeout,
-                extra_headers=extra_headers
-            )
+            # Build connect kwargs based on websockets version
+            connect_kwargs = {
+                "ping_interval": self.ping_interval,
+                "ping_timeout": self.ping_timeout,
+            }
+
+            # Add headers if present - try both parameter names for compatibility
+            if headers:
+                # websockets >= 10.0 uses additional_headers
+                # websockets < 10.0 uses extra_headers
+                try:
+                    ws = await websockets.connect(url, additional_headers=headers, **connect_kwargs)
+                except TypeError:
+                    # Fallback for older versions
+                    ws = await websockets.connect(url, extra_headers=headers, **connect_kwargs)
+            else:
+                ws = await websockets.connect(url, **connect_kwargs)
+
             self._connections[url] = ws
             logger.info(f"Connected: {url}")
             return True
