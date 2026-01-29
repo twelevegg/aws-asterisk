@@ -1,5 +1,23 @@
 # AICC Pipeline - AWS Asterisk
 
+## 이 프로젝트 작업 규칙
+
+### 금지 사항
+- `aws` CLI 명령어 사용 금지
+- `ssh` 직접 접속 금지
+- `ssm` 직접 접속 금지
+- EC2 인스턴스 직접 제어 금지
+
+### 배포 방법
+- 코드 수정 후 `git push origin dev` 또는 `git push origin main`
+- GitHub Actions가 자동으로 배포함
+
+### 테스트
+- 로컬에서 `docker-compose up`으로 테스트
+- EC2 로그 확인 필요시 사용자에게 요청
+
+---
+
 AI Contact Center 시스템. Asterisk PBX로 SIP 통화를 받아 화자별 음성을 분리하고, STT + 턴 분석 후 WebSocket으로 전송.
 
 ## 아키텍처

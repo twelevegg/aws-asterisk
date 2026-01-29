@@ -94,3 +94,7 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+
+# OMC state files
+.omc/
+python/.omc/
