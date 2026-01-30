@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+*.egg-info
+dist
+build
+venv
+.venv
+
+# Node
+node_modules
+npm-debug.log
+
+# Environment
+.env
+.env.local
+*.env
+
+# Credentials (보안)
+credentials/
+*.json
+!package.json
+!package-lock.json
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker
+
+# OMC state
+.omc/
+
+# Documentation
+*.md
+!README.md
+
+# GitHub
+.github/

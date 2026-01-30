@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # Asterisk PBX - SIP/RTP 처리
+  # =============================================================================
+  asterisk:
+    image: andrius/asterisk:20-alpine
+    container_name: aicc-asterisk
+    network_mode: host
+    restart: unless-stopped
+
+    environment:
+      - TZ=Asia/Seoul
+
+    volumes:
+      # Asterisk 설정 파일
+      - ./config/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./config/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./config/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./config/http.conf:/etc/asterisk/http.conf:ro
+      - ./config/rtp.conf:/etc/asterisk/rtp.conf:ro
+      # 로그 영속화
+      - asterisk-logs:/var/log/asterisk
+      - asterisk-spool:/var/spool/asterisk
+
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+
+    healthcheck:
+      test: ["CMD", "asterisk", "-rx", "core show version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # =============================================================================
+  # Stasis App - ARI 클라이언트 (Node.js)
+  # =============================================================================
+  stasis-app:
+    build:
+      context: ./stasis_app
+      dockerfile: Dockerfile
+    container_name: aicc-stasis
+    network_mode: host
+    restart: unless-stopped
+
+    depends_on:
+      asterisk:
+        condition: service_healthy
+
+    environment:
+      - TZ=Asia/Seoul
+      - ARI_URL=${ARI_URL:-http://127.0.0.1:8088/ari}
+      - ARI_USERNAME=${ARI_USERNAME:-asterisk}
+      - ARI_PASSWORD=${ARI_PASSWORD}
+      - EXTERNAL_HOST=${EXTERNAL_HOST:-127.0.0.1}
+      - CUSTOMER_PORT=${CUSTOMER_PORT:-12345}
+      - AGENT_PORT=${AGENT_PORT:-12346}
+      - APP_NAME=${APP_NAME:-linphone-handler}
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # =============================================================================
+  # AICC Pipeline - 음성 처리 (Python)
+  # =============================================================================
+  aicc-pipeline:
+    build:
+      context: .
+      dockerfile: python/Dockerfile
+    container_name: aicc-pipeline
+    network_mode: host
+    restart: unless-stopped
+
+    depends_on:
+      - stasis-app
+
+    environment:
+      - TZ=Asia/Seoul
+      # UDP 포트
+      - AICC_CUSTOMER_PORT=${AICC_CUSTOMER_PORT:-12345}
+      - AICC_AGENT_PORT=${AICC_AGENT_PORT:-12346}
+      # WebSocket
+      - AICC_WS_URL=${AICC_WS_URL}
+      - AICC_WS_RECONNECT_INTERVAL=${AICC_WS_RECONNECT_INTERVAL:-5.0}
+      # VAD 설정
+      - AICC_VAD_THRESHOLD=${AICC_VAD_THRESHOLD:-0.5}
+      - AICC_MIN_SPEECH_MS=${AICC_MIN_SPEECH_MS:-250.0}
+      - AICC_MIN_SILENCE_MS=${AICC_MIN_SILENCE_MS:-400.0}
+      # STT 설정
+      - AICC_STT_LANGUAGE=${AICC_STT_LANGUAGE:-ko-KR}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/gcp-credentials.json
+      # 턴 감지 설정
+      - AICC_TURN_MORPHEME_WEIGHT=${AICC_TURN_MORPHEME_WEIGHT:-0.6}
+      - AICC_TURN_DURATION_WEIGHT=${AICC_TURN_DURATION_WEIGHT:-0.2}
+      - AICC_TURN_SILENCE_WEIGHT=${AICC_TURN_SILENCE_WEIGHT:-0.2}
+      - AICC_TURN_COMPLETE_THRESHOLD=${AICC_TURN_COMPLETE_THRESHOLD:-0.65}
+      # 로깅
+      - AICC_LOG_LEVEL=${AICC_LOG_LEVEL:-INFO}
+      - AICC_DEBUG=${AICC_DEBUG:-false}
+
+    volumes:
+      # GCP 인증 파일 마운트
+      - ${GCP_CREDENTIALS_PATH:-./credentials/gcp-credentials.json}:/app/credentials/gcp-credentials.json:ro
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  asterisk-logs:
+  asterisk-spool:
