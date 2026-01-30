@@ -5,7 +5,7 @@ services:
   # Asterisk PBX - SIP/RTP 처리
   # =============================================================================
   asterisk:
-    image: andrius/asterisk:20-alpine
+    image: andrius/asterisk:20-cert
     container_name: aicc-asterisk
     network_mode: host
     restart: unless-stopped
