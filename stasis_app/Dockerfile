@@ -8,8 +8,8 @@ WORKDIR /app
 # 의존성 파일 복사
 COPY package*.json ./
 
-# 의존성 설치
-RUN npm ci --only=production
+# 의존성 설치 (npm install - package-lock.json 없어도 동작)
+RUN npm install --omit=dev
 
 # 애플리케이션 코드 복사
 COPY . .
