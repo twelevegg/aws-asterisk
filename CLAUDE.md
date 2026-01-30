@@ -68,12 +68,56 @@ sudo asterisk -rx "ari show apps"
 
 ## 환경 변수
 
+### 파일 구조
+- **루트 `.env`**: 통합 환경변수 파일 (Node.js + Python 모두 포함)
+- **루트 `.env.example`**: 템플릿
+
+> **참고**: `.env` 파일은 하나만 관리. 앱별 분리 불필요.
+
+### Node.js (stasis_app) 전용
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `ARI_URL` | `http://127.0.0.1:8088/ari` | Asterisk ARI 엔드포인트 |
+| `ARI_USERNAME` | `asterisk` | ARI 인증 사용자 |
+| `ARI_PASSWORD` | (필수) | ARI 인증 비밀번호 |
+| `EXTERNAL_HOST` | `127.0.0.1` | ExternalMedia UDP 호스트 |
+| `CUSTOMER_PORT` | `12345` | 고객 음성 UDP 포트 |
+| `AGENT_PORT` | `12346` | 상담사 음성 UDP 포트 |
+
+### Python (aicc_pipeline) 전용
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `AICC_WS_URL` | (필수) | WebSocket 엔드포인트 |
+| `AICC_CUSTOMER_PORT` | `12345` | 고객 음성 UDP 포트 |
+| `AICC_AGENT_PORT` | `12346` | 상담사 음성 UDP 포트 |
+| `AICC_VAD_THRESHOLD` | `0.5` | VAD 임계값 |
+| `AICC_STT_LANGUAGE` | `ko-KR` | STT 언어 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | - | GCP 인증 JSON 경로 |
+
+### 공유 변수 (포트 동기화 필요)
+
 ```bash
-# .env 파일 또는 export
-LINPHONE_PASSWORD=xxx              # Linphone 계정 비밀번호
-WEBSOCKET_URLS=wss://...           # WebSocket 엔드포인트
-GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/credentials.json
+# Node.js와 Python이 같은 포트를 사용해야 함
+CUSTOMER_PORT=12345        # Node.js용
+AICC_CUSTOMER_PORT=12345   # Python용 (동일 값)
+
+AGENT_PORT=12346           # Node.js용
+AICC_AGENT_PORT=12346      # Python용 (동일 값)
 ```
+
+### 로컬 개발 실행
+
+```bash
+# dotenv 미사용이므로 직접 source 필요
+source .env
+node stasis_app/app.js &
+python -m aicc_pipeline
+```
+
+### Docker 환경
+docker-compose.yml이 루트 `.env`를 자동으로 읽어서 컨테이너에 전달.
 
 ## WebSocket 메시지 타입
 
