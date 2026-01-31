@@ -326,7 +326,9 @@ def create_vad(
             logger.info("Falling back to adaptive/energy VAD")
 
     # Energy threshold is different scale than Silero confidence
-    energy_threshold = 500.0 * threshold
+    # For telephony audio, RMS 1000+ is typically speech, 200-500 is noise
+    # Default threshold 0.5 * 2000 = 1000 RMS
+    energy_threshold = 2000.0 * threshold
 
     if use_adaptive:
         logger.info("Using AdaptiveEnergyVAD for improved latency")
