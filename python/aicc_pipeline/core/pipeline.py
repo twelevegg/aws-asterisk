@@ -220,6 +220,9 @@ class SpeakerProcessor:
                 )
 
                 if self._silence_frames >= min_silence_frames:
+                    # CRITICAL: Set _is_speaking=False IMMEDIATELY to prevent duplicate finalize calls
+                    # The async _finalize_turn() would otherwise be called multiple times
+                    self._is_speaking = False
                     _safe_task(self._finalize_turn(), "finalize_turn")
 
     async def _finalize_turn(self):
