@@ -9,9 +9,11 @@
 - EC2 인스턴스 직접 제어 금지
 
 ### config/ 디렉토리 관리 정책
-- **EC2 설정이 기준** - config/는 레포에 포함되지만, EC2의 설정을 따름
-- config 변경 필요시: EC2에서 수정 → 사용자가 이 레포에 반영
-- 이 레포에서 config/ 직접 수정 금지 (EC2 설정과 충돌 방지)
+- **이 레포가 기준** - config/ 수정 후 git push하면 EC2에 자동 반영
+- pjsip.conf: SIP 엔드포인트, 에이전트 설정
+- extensions.conf: 다이얼플랜 (콜 라우팅)
+- ari.conf: ARI 인증 설정
+- 배포 시 Asterisk 컨테이너가 재시작되어 설정 자동 적용
 
 ### 배포 방법
 - 코드 수정 후 `git push origin dev` 또는 `git push origin main`
