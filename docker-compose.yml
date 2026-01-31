@@ -52,9 +52,7 @@ services:
 
     environment:
       - TZ=Asia/Seoul
-      - ARI_URL=${ARI_URL:-http://127.0.0.1:8088/ari}
-      - ARI_USERNAME=${ARI_USERNAME:-asterisk}
-      - ARI_PASSWORD=${ARI_PASSWORD}
+      # ARI settings are hardcoded in app.js (matches config/ari.conf)
       - EXTERNAL_HOST=${EXTERNAL_HOST:-127.0.0.1}
       - CUSTOMER_PORT=${CUSTOMER_PORT:-12345}
       - AGENT_PORT=${AGENT_PORT:-12346}
