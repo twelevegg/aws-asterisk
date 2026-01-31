@@ -7,12 +7,11 @@
 - `ssh` 직접 접속 금지
 - `ssm` 직접 접속 금지
 - EC2 인스턴스 직접 제어 금지
-- **Asterisk config 파일 수정 금지** (이 레포에서 관리하지 않음)
 
-### 이 레포의 범위
-- **stasis_app/**: Node.js Stasis 앱 코드만 관리
-- **python/aicc_pipeline/**: Python 파이프라인 코드만 관리
-- Asterisk 설정(pjsip.conf, extensions.conf 등)은 EC2에서 직접 관리
+### config/ 디렉토리 관리 정책
+- **EC2 설정이 기준** - config/는 레포에 포함되지만, EC2의 설정을 따름
+- config 변경 필요시: EC2에서 수정 → 사용자가 이 레포에 반영
+- 이 레포에서 config/ 직접 수정 금지 (EC2 설정과 충돌 방지)
 
 ### 배포 방법
 - 코드 수정 후 `git push origin dev` 또는 `git push origin main`
@@ -44,6 +43,7 @@ Linphone → Asterisk PBX → Stasis App (Node.js) → UDP RTP
 |------|------|
 | `stasis_app/app.js` | Stasis 앱. 통화 이벤트 처리, Dual Snoop (in/out), ExternalMedia 생성 |
 | `python/aicc_pipeline/` | 메인 파이프라인 (core, audio, vad, stt, turn, websocket 모듈) |
+| `config/` | Asterisk 설정 (pjsip.conf, extensions.conf, ari.conf 등) - EC2 기준 |
 
 ## 포트
 
