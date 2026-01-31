@@ -135,6 +135,7 @@ class SpeakerProcessor:
         self._is_speaking = False
         self._speech_start_time: Optional[float] = None
         self._silence_frames = 0
+        self._vad_frame_count = 0  # For debugging
 
         # Stats
         self.turn_count = 0
@@ -149,12 +150,26 @@ class SpeakerProcessor:
 
         window_size = self._vad.window_size
 
+        # Log first audio receipt
+        if self._vad_frame_count == 0 and len(self._audio_buffer) >= window_size:
+            logger.info(f"[{self.speaker}] First audio chunk received, buffer={len(self._audio_buffer)} samples")
+
         while len(self._audio_buffer) >= window_size:
             window = self._audio_buffer[:window_size]
             self._audio_buffer = self._audio_buffer[window_size:]
 
             window_bytes = window.tobytes()
             is_speech = self._vad.is_speech(window_bytes)
+
+            # Track VAD frame count for debugging
+            self._vad_frame_count += 1
+
+            # Log VAD state changes
+            if is_speech and not self._is_speaking:
+                rms = np.sqrt(np.mean(window.astype(np.float32) ** 2))
+                logger.info(f"[{self.speaker}] Speech START at {self._current_time:.2f}s (RMS={rms:.0f})")
+            elif not is_speech and self._is_speaking and self._silence_frames == 0:
+                logger.debug(f"[{self.speaker}] Silence detected at {self._current_time:.2f}s")
 
             self._process_vad_state(is_speech, window_bytes)
             self._current_time += window_size / self.config.target_sample_rate
@@ -313,6 +328,8 @@ class AICCPipeline:
         )
         if processor:
             processor.process_audio(pcm_bytes)
+        else:
+            logger.warning(f"No processor for speaker: {speaker}")
 
     def _on_first_packet(self, speaker: str):
         """Handle first packet (send metadata_start)."""

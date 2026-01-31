@@ -129,20 +129,32 @@ class UDPReceiver:
                 try:
                     rtp = RTPPacket.parse(data)
                     self._packet_count += 1
+
+                    # Log codec info for first packet
+                    if self._packet_count == 1:
+                        logger.info(f"[{self.speaker}] First RTP: PT={rtp.payload_type}, payload={len(rtp.payload)} bytes")
+                        if not rtp.is_ulaw():
+                            logger.warning(f"[{self.speaker}] Expected ulaw (PT=0), got PT={rtp.payload_type}")
+
                 except ValueError as e:
                     self._error_count += 1
-                    if self._error_count <= 5:
+                    if self._error_count <= 10:
                         logger.warning(f"RTP parse error ({self.speaker}): {e}")
                     continue
 
                 # Convert audio: ulaw 8kHz -> PCM 16kHz
                 try:
                     pcm_16k = AudioConverter.convert(rtp.payload)
+
+                    # Log conversion success for first few packets
+                    if self._packet_count <= 3:
+                        logger.info(f"[{self.speaker}] Audio converted: {len(rtp.payload)} -> {len(pcm_16k)} bytes")
+
                     self.on_audio(pcm_16k, self.speaker)
                 except Exception as e:
-                    if self._error_count <= 5:
-                        logger.warning(f"Audio convert error ({self.speaker}): {e}")
                     self._error_count += 1
+                    # Always log conversion errors (critical for debugging)
+                    logger.error(f"Audio convert error ({self.speaker}): {e}", exc_info=(self._error_count <= 3))
 
             except BlockingIOError:
                 await asyncio.sleep(0.001)
