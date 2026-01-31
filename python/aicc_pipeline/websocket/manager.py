@@ -138,12 +138,15 @@ class WebSocketManager:
                 extra_headers = self.auth.get_auth_headers()
                 logger.debug(f"Using JWT authentication for {url}")
 
-            ws = await websockets.connect(
-                url,
-                ping_interval=self.ping_interval,
-                ping_timeout=self.ping_timeout,
-                extra_headers=extra_headers
-            )
+            # websockets >= 11.0 uses additional_headers instead of extra_headers
+            connect_kwargs = {
+                "ping_interval": self.ping_interval,
+                "ping_timeout": self.ping_timeout,
+            }
+            if extra_headers:
+                connect_kwargs["additional_headers"] = extra_headers
+
+            ws = await websockets.connect(url, **connect_kwargs)
             self._connections[url] = ws
             logger.info(f"Connected: {url}")
             return True
