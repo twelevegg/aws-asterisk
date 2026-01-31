@@ -7,6 +7,12 @@
 - `ssh` 직접 접속 금지
 - `ssm` 직접 접속 금지
 - EC2 인스턴스 직접 제어 금지
+- **Asterisk config 파일 수정 금지** (이 레포에서 관리하지 않음)
+
+### 이 레포의 범위
+- **stasis_app/**: Node.js Stasis 앱 코드만 관리
+- **python/aicc_pipeline/**: Python 파이프라인 코드만 관리
+- Asterisk 설정(pjsip.conf, extensions.conf 등)은 EC2에서 직접 관리
 
 ### 배포 방법
 - 코드 수정 후 `git push origin dev` 또는 `git push origin main`
@@ -36,11 +42,8 @@ Linphone → Asterisk PBX → Stasis App (Node.js) → UDP RTP
 
 | 파일 | 역할 |
 |------|------|
-| `app.js` | Stasis 앱. 통화 이벤트 처리, Dual Snoop (in/out), ExternalMedia 생성 |
-| `aicc_pipeline.py` | 메인 파이프라인. RTP 파싱, 오디오 변환, VAD, STT, 턴 판정 |
-| `python/aicc_pipeline/` | 모듈화된 버전 (config, audio, vad, stt, turn, websocket) |
-| `config/` | Asterisk 설정 (pjsip.conf, extensions.conf, ari.conf 등) |
-| `deploy.sh` | EC2 배포 스크립트 |
+| `stasis_app/app.js` | Stasis 앱. 통화 이벤트 처리, Dual Snoop (in/out), ExternalMedia 생성 |
+| `python/aicc_pipeline/` | 메인 파이프라인 (core, audio, vad, stt, turn, websocket 모듈) |
 
 ## 포트
 
@@ -53,17 +56,10 @@ Linphone → Asterisk PBX → Stasis App (Node.js) → UDP RTP
 
 ```bash
 # 1. Python 파이프라인 (터미널 1)
-python3 aicc_pipeline.py
-
-# 또는 모듈로 실행
 cd python && python -m aicc_pipeline
 
 # 2. Stasis App (터미널 2)
 cd stasis_app && npm install && node app.js
-
-# 3. Asterisk 상태 확인
-sudo asterisk -rx "pjsip show registrations"
-sudo asterisk -rx "ari show apps"
 ```
 
 ## 환경 변수
@@ -74,18 +70,9 @@ sudo asterisk -rx "ari show apps"
 
 > **참고**: `.env` 파일은 하나만 관리. 앱별 분리 불필요.
 
-### ARI 설정 (EC2 config 파일로 관리)
-
-> **중요**: ARI 관련 설정(URL, USERNAME, PASSWORD)은 `.env`에서 관리하지 않음.
-> EC2 내의 Asterisk config 파일(`config/ari.conf`)에서 직접 관리.
-
-| 설정 | 관리 위치 | 설명 |
-|------|----------|------|
-| ARI URL | `config/http.conf` | 기본값 `http://127.0.0.1:8088/ari` |
-| ARI Username | `config/ari.conf` | Asterisk ARI 사용자 |
-| ARI Password | `config/ari.conf` | Asterisk ARI 비밀번호 |
-
 ### Node.js (stasis_app) 전용
+
+> **참고**: ARI 관련 설정(URL, USERNAME, PASSWORD)은 EC2에서 직접 관리
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
@@ -156,14 +143,6 @@ docker-compose.yml이 루트 `.env`를 자동으로 읽어서 컨테이너에 �
 
 ## 트러블슈팅
 
-```bash
-# RTP 패킷 안 오면
-sudo asterisk -rx "rtp set debug on"
-
-# ARI 연결 실패
-sudo asterisk -rx "http show status"
-netstat -tlnp | grep 8088
-
-# WebSocket 연결 확인
-# aicc_pipeline.py의 ws_url 설정 확인
-```
+- **RTP 패킷 안 오면**: EC2에서 Asterisk 로그 확인 필요
+- **ARI 연결 실패**: EC2에서 Asterisk HTTP 상태 확인 필요
+- **WebSocket 연결 확인**: `AICC_WS_URL` 환경변수 확인

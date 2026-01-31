@@ -21,7 +21,7 @@ const EXTERNAL_HOST = process.env.EXTERNAL_HOST || '127.0.0.1';
 const STASIS_APP_NAME = 'linphone-handler';
 const DIAL_TIMEOUT = 30; // seconds
 
-// AgentRouter - Round-Robin agent selection
+// AgentRouter - Round-Robin agent selection with ARI registration check
 class AgentRouter {
     constructor() {
         this.agents = [
@@ -33,16 +33,37 @@ class AgentRouter {
             { id: 'agent06', endpoint: 'PJSIP/agent06', status: 'available' }
         ];
         this.currentIndex = 0;
+        this.ariClient = null;
     }
 
-    getNextAvailable() {
+    setAriClient(client) {
+        this.ariClient = client;
+    }
+
+    async isAgentRegistered(agentId) {
+        if (!this.ariClient) return false;
+        try {
+            const endpoint = await this.ariClient.endpoints.get({
+                tech: 'PJSIP',
+                resource: agentId
+            });
+            return endpoint.state === 'online';
+        } catch (err) {
+            return false;
+        }
+    }
+
+    async getNextAvailable() {
         let attempts = 0;
 
         while (attempts < this.agents.length) {
             const agent = this.agents[this.currentIndex];
             this.currentIndex = (this.currentIndex + 1) % this.agents.length;
 
-            if (agent.status === 'available') {
+            // Check actual registration status via ARI
+            const isRegistered = await this.isAgentRegistered(agent.id);
+
+            if (isRegistered && agent.status === 'available') {
                 agent.status = 'busy';
                 return agent;
             }
@@ -50,8 +71,7 @@ class AgentRouter {
             attempts++;
         }
 
-        // If all busy, return null
-        console.log('[WARN] All agents busy');
+        console.log('[WARN] No registered and available agents');
         return null;
     }
 
@@ -152,6 +172,9 @@ async function main() {
         const client = await AriClient.connect(ARI_URL, ARI_USERNAME, ARI_PASSWORD);
         console.log('[INFO] Connected to ARI');
 
+        // Set ARI client for agent registration checks
+        agentRouter.setAriClient(client);
+
         client.on('StasisStart', async (event, channel) => {
             const channelName = channel.name || '';
 
@@ -187,8 +210,8 @@ async function main() {
                 const ports = portPool.allocate();
                 console.log(`[${callId}] Allocated ports - Customer: ${ports.customer}, Agent: ${ports.agent}`);
 
-                // 3. Select next available agent
-                const agent = agentRouter.getNextAvailable();
+                // 3. Select next available agent (checks ARI registration)
+                const agent = await agentRouter.getNextAvailable();
 
                 // If all agents busy, reject the call
                 if (!agent) {
