@@ -190,10 +190,11 @@ class SpeakerProcessor:
             return self._vad.get_adaptive_silence_ms(speech_duration)
 
         # Fallback: simple adaptive logic
+        # Increased thresholds to prevent false turn endings in telephony audio
         if speech_duration < 0.5:
-            return 200.0  # Short response
+            return 350.0  # Short response (was 200ms, too aggressive)
         elif speech_duration < 2.0:
-            return 300.0  # Normal utterance
+            return 450.0  # Normal utterance (was 300ms)
         else:
             return self.config.min_silence_ms  # Long, use default
 
@@ -231,20 +232,24 @@ class SpeakerProcessor:
         if speech_start_time is None:
             return
 
-        # Reset state immediately to prevent duplicate calls
-        self._reset_state()
-
         end_time = current_time - (
             silence_frames * self._vad.window_size / self.config.target_sample_rate
         )
         duration = end_time - speech_start_time
 
         if duration < 0.1:
+            self._reset_state()
             return
 
-        # Get transcript (async, non-blocking)
+        # CRITICAL: Get transcript BEFORE clearing the buffer!
         result = await self._stt.transcribe()
         transcript = result.text
+
+        # Now safe to reset state (clears STT buffer)
+        self._reset_state()
+
+        # Log speech end for debugging
+        logger.info(f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript[:50]}...' " if len(transcript) > 50 else f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript}'")
 
         # Calculate silence duration for turn detection
         silence_duration_ms = silence_frames * self._vad.window_size / self.config.target_sample_rate * 1000
