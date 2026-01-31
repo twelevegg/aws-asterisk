@@ -10,6 +10,8 @@
 *.pem
 *.key
 *.p12
+credentials/*.json
+!credentials/.gitkeep
 
 # Python
 __pycache__/
