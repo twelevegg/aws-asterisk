@@ -104,11 +104,16 @@ class UDPReceiver:
         if self.allowed_sources:
             logger.info(f"Source whitelist enabled: {self.allowed_sources}")
 
-        loop = asyncio.get_event_loop()
+        # Use get_running_loop() for Python 3.10+ compatibility
+        loop = asyncio.get_running_loop()
 
         while self._running:
             try:
                 data, addr = await loop.sock_recvfrom(self._socket, 2048)
+
+                # Debug log for first few packets
+                if self._packet_count < 3:
+                    logger.info(f"RTP packet received on {self.port} from {addr}, size={len(data)}")
 
                 # Validate source IP
                 if not self._validate_source(addr):
