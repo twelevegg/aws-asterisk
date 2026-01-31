@@ -74,13 +74,21 @@ sudo asterisk -rx "ari show apps"
 
 > **참고**: `.env` 파일은 하나만 관리. 앱별 분리 불필요.
 
+### ARI 설정 (EC2 config 파일로 관리)
+
+> **중요**: ARI 관련 설정(URL, USERNAME, PASSWORD)은 `.env`에서 관리하지 않음.
+> EC2 내의 Asterisk config 파일(`config/ari.conf`)에서 직접 관리.
+
+| 설정 | 관리 위치 | 설명 |
+|------|----------|------|
+| ARI URL | `config/http.conf` | 기본값 `http://127.0.0.1:8088/ari` |
+| ARI Username | `config/ari.conf` | Asterisk ARI 사용자 |
+| ARI Password | `config/ari.conf` | Asterisk ARI 비밀번호 |
+
 ### Node.js (stasis_app) 전용
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `ARI_URL` | `http://127.0.0.1:8088/ari` | Asterisk ARI 엔드포인트 |
-| `ARI_USERNAME` | `asterisk` | ARI 인증 사용자 |
-| `ARI_PASSWORD` | (필수) | ARI 인증 비밀번호 |
 | `EXTERNAL_HOST` | `127.0.0.1` | ExternalMedia UDP 호스트 |
 | `CUSTOMER_PORT` | `12345` | 고객 음성 UDP 포트 |
 | `AGENT_PORT` | `12346` | 상담사 음성 UDP 포트 |
