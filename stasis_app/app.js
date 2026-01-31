@@ -41,14 +41,19 @@ class AgentRouter {
     }
 
     async isAgentRegistered(agentId) {
-        if (!this.ariClient) return false;
+        if (!this.ariClient) {
+            console.log(`[DEBUG] No ARI client for ${agentId}`);
+            return false;
+        }
         try {
             const endpoint = await this.ariClient.endpoints.get({
                 tech: 'PJSIP',
                 resource: agentId
             });
+            console.log(`[DEBUG] ${agentId} ARI state: ${endpoint.state}`);
             return endpoint.state === 'online';
         } catch (err) {
+            console.log(`[DEBUG] Error checking ${agentId}: ${err.message}`);
             return false;
         }
     }
@@ -62,6 +67,7 @@ class AgentRouter {
 
             // Check actual registration status via ARI
             const isRegistered = await this.isAgentRegistered(agent.id);
+            console.log(`[DEBUG] ${agent.id}: registered=${isRegistered}, status=${agent.status}`);
 
             if (isRegistered && agent.status === 'available') {
                 agent.status = 'busy';
