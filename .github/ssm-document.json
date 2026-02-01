@@ -6,6 +6,16 @@
       "type": "String",
       "default": "main",
       "description": "Git branch to deploy"
+    },
+    "wsUrl1": {
+      "type": "String",
+      "default": "",
+      "description": "AICC_WS_URL_1 value"
+    },
+    "wsUrl2": {
+      "type": "String",
+      "default": "",
+      "description": "AICC_WS_URL_2 value"
     }
   },
   "mainSteps": [
@@ -90,6 +100,25 @@
           "  echo '========================================='",
           "  echo ''",
           "  cp .env.example .env",
+          "fi",
+          "",
+          "# WebSocket URL 환경변수 업데이트 (GitHub Secrets에서)",
+          "if [ -n \"{{ wsUrl1 }}\" ]; then",
+          "  echo 'Updating AICC_WS_URL_1...'",
+          "  if grep -q '^AICC_WS_URL_1=' .env; then",
+          "    sed -i 's|^AICC_WS_URL_1=.*|AICC_WS_URL_1={{ wsUrl1 }}|' .env",
+          "  else",
+          "    echo 'AICC_WS_URL_1={{ wsUrl1 }}' >> .env",
+          "  fi",
+          "fi",
+          "",
+          "if [ -n \"{{ wsUrl2 }}\" ]; then",
+          "  echo 'Updating AICC_WS_URL_2...'",
+          "  if grep -q '^AICC_WS_URL_2=' .env; then",
+          "    sed -i 's|^AICC_WS_URL_2=.*|AICC_WS_URL_2={{ wsUrl2 }}|' .env",
+          "  else",
+          "    echo 'AICC_WS_URL_2={{ wsUrl2 }}' >> .env",
+          "  fi",
           "fi",
           "",
           "# GCP credentials 확인",

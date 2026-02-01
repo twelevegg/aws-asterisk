@@ -72,7 +72,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --document-name "$SSM_DOCUMENT_NAME" \
             --instance-ids "$INSTANCE_ID" \
-            --parameters "branch=[\"${{ github.ref_name }}\"]" \
+            --parameters "branch=[\"${{ github.ref_name }}\"],wsUrl1=[\"${{ secrets.AICC_WS_URL_1 }}\"],wsUrl2=[\"${{ secrets.AICC_WS_URL_2 }}\"]" \
             --timeout-seconds 600 \
             --query 'Command.CommandId' \
             --output text)
