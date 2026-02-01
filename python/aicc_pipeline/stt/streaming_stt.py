@@ -183,6 +183,8 @@ class StreamingSTTSession:
                     self._audio_queue.get(),
                     timeout=1.0
                 )
+                if chunk is None:  # Sentinel value
+                    return  # Clean termination
                 yield chunk
             except asyncio.TimeoutError:
                 continue
@@ -219,12 +221,22 @@ class StreamingSTTSession:
             await self._audio_queue.put(audio_data)
 
     async def stop(self) -> None:
-        """Stop the streaming session."""
+        """Stop the streaming session gracefully."""
         self._running = False
+        # Send sentinel to unblock the audio generator
+        try:
+            await self._audio_queue.put(None)
+        except Exception:
+            pass
+
+        # Wait for task to complete naturally (with timeout)
         if self._task:
-            self._task.cancel()
             try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+                await asyncio.wait_for(self._task, timeout=2.0)
+            except asyncio.TimeoutError:
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
         logger.info(f"Stopped streaming session [{self.call_id}:{self.speaker}]")

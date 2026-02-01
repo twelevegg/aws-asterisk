@@ -182,18 +182,13 @@ class AdaptiveEnergyVAD(BaseVAD):
 
     def is_speech(self, pcm_bytes: bytes) -> bool:
         """
-        Check if audio contains speech with noise rejection.
+        Check if audio contains speech with noise rejection and smoothing.
 
-        Uses both energy and zero-crossing rate.
+        Uses smoothed confidence score for more stable detection.
         """
-        rms = self._compute_rms(pcm_bytes)
-        zcr = self._compute_zcr(pcm_bytes)
-
-        # High ZCR + low energy = noise, not speech
-        if zcr > self.zcr_threshold and rms < self.threshold * 1.5:
-            return False
-
-        return rms > self.threshold
+        # Use smoothed confidence for more stable detection
+        confidence = self.get_confidence(pcm_bytes)
+        return confidence >= 0.5
 
     def get_confidence(self, pcm_bytes: bytes) -> float:
         """
@@ -209,7 +204,11 @@ class AdaptiveEnergyVAD(BaseVAD):
 
         # Reduce confidence for high ZCR (likely noise)
         if zcr > self.zcr_threshold:
-            energy_conf *= max(0.5, 1.0 - zcr)
+            # More aggressive reduction for very high ZCR
+            if zcr > self.zcr_threshold * 1.5:
+                energy_conf *= 0.2  # Very high ZCR = likely electrical noise
+            else:
+                energy_conf *= max(0.3, 1.0 - zcr * 1.5)  # Stronger reduction
 
         # Apply smoothing
         return self._get_smoothed_confidence(energy_conf)
@@ -228,14 +227,14 @@ class AdaptiveEnergyVAD(BaseVAD):
         to reduce latency. Longer utterances keep standard thresholds.
         """
         if speech_duration < 0.5:
-            # Short response: "네", "아니요" - use fast threshold
-            return 200.0
+            # Short response: "네", "아니요" - telephony needs longer threshold
+            return 350.0
         elif speech_duration < 2.0:
             # Normal utterance - use medium threshold
-            return 300.0
+            return 450.0
         else:
             # Long explanation - use standard threshold
-            return 400.0
+            return 500.0
 
     def reset(self):
         """Reset VAD state."""

@@ -16,6 +16,21 @@ from pathlib import Path
 from typing import List, Optional
 
 
+def _get_gcp_project_id() -> str:
+    """Extract project_id from GCP credentials JSON."""
+    import json
+    creds_path = os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        str(Path.home() / ".config/gcloud/credentials.json")
+    )
+    try:
+        with open(creds_path) as f:
+            creds = json.load(f)
+            return creds.get("project_id", "")
+    except Exception:
+        return ""
+
+
 def _get_ws_urls_from_env() -> List[str]:
     """Collect WebSocket URLs from environment variables."""
     urls = []
@@ -88,6 +103,7 @@ class PipelineConfig:
             str(Path.home() / ".config/gcloud/credentials.json")
         )
     )
+    gcp_project_id: str = field(default_factory=_get_gcp_project_id)
 
     # Turn detection weights (for fusion scoring)
     turn_morpheme_weight: float = field(

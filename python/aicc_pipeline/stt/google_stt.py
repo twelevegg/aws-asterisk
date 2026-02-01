@@ -148,7 +148,7 @@ class GoogleCloudSTT:
                         audio_channel_count=1,
                     ),
                     language_codes=[self.language],
-                    model="long",
+                    model="telephony",
                 )
 
                 request = speech.RecognizeRequest(

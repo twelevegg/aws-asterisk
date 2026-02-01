@@ -33,7 +33,7 @@ def _safe_task(coro, name: str = "task"):
             logger.error(f"Async task '{name}' failed: {e}")
     return asyncio.create_task(wrapper())
 from ..vad import create_vad, BaseVAD, AdaptiveEnergyVAD
-from ..stt import GoogleCloudSTT
+from ..stt import StreamingSTT, StreamingSTTSession, StreamingResult
 from ..turn import TurnDetector, TurnDecision
 from ..websocket import WebSocketManager
 from .udp_receiver import UDPReceiver
@@ -114,12 +114,14 @@ class SpeakerProcessor:
             min_silence_ms=config.min_silence_ms,
         )
 
-        # STT (async)
-        self._stt = GoogleCloudSTT(
-            credentials_path=config.gcp_credentials_path,
-            language=config.stt_language,
+        # Streaming STT
+        self._streaming_stt = StreamingSTT(
+            project_id=config.gcp_project_id,
+            language_code=config.stt_language,
+            model="telephony",
             sample_rate=config.target_sample_rate,
         )
+        self._stt_session: Optional[StreamingSTTSession] = None
 
         # Turn detector (improved weighted fusion)
         self._turn_detector = TurnDetector(
@@ -137,11 +139,29 @@ class SpeakerProcessor:
         self._silence_frames = 0
         self._vad_frame_count = 0  # For debugging
 
+        # Streaming STT state
+        self._interim_transcript = ""
+        self._final_transcript = ""
+        self._waiting_for_final = False
+        self._startup_audio_buffer: list[bytes] = []
+
+        # Lock to prevent duplicate finalize calls
+        self._finalize_lock = asyncio.Lock()
+
         # Stats
         self.turn_count = 0
         self.complete_turns = 0
         self.incomplete_turns = 0
         self.total_speech_time = 0.0
+
+    async def _on_streaming_result(self, result: StreamingResult):
+        """Handle streaming STT results."""
+        if result.is_final:
+            self._final_transcript = result.transcript
+            logger.debug(f"[{self.speaker}] Final STT result: '{result.transcript}'")
+        else:
+            self._interim_transcript = result.transcript
+            logger.debug(f"[{self.speaker}] Interim STT result: '{result.transcript}'")
 
     def process_audio(self, pcm_bytes: bytes):
         """Process PCM audio chunk."""
@@ -206,8 +226,20 @@ class SpeakerProcessor:
             if not self._is_speaking:
                 self._is_speaking = True
                 self._speech_start_time = self._current_time
+                self._startup_audio_buffer = []  # Reset buffer
+                # Start streaming session
+                _safe_task(self._start_streaming_session(), "start_streaming")
 
-            self._stt.add_audio(audio_bytes)
+            # Buffer audio if session not ready, otherwise feed directly
+            if self._stt_session is None:
+                self._startup_audio_buffer.append(audio_bytes)
+            else:
+                # Feed any buffered audio first
+                if self._startup_audio_buffer:
+                    for buffered in self._startup_audio_buffer:
+                        _safe_task(self._stt_session.feed_audio(buffered), "feed_buffered_audio")
+                    self._startup_audio_buffer = []
+                _safe_task(self._stt_session.feed_audio(audio_bytes), "feed_audio")
         else:
             if self._is_speaking:
                 self._silence_frames += 1
@@ -225,73 +257,108 @@ class SpeakerProcessor:
                     self._is_speaking = False
                     _safe_task(self._finalize_turn(), "finalize_turn")
 
-    async def _finalize_turn(self):
-        """Finalize current turn and emit event."""
-        # Capture state immediately to avoid race condition
-        speech_start_time = self._speech_start_time
-        silence_frames = self._silence_frames
-        current_time = self._current_time
+    async def _start_streaming_session(self):
+        """Start a new streaming STT session."""
+        if self._stt_session:
+            await self._stt_session.stop()
 
-        if speech_start_time is None:
-            return
-
-        end_time = current_time - (
-            silence_frames * self._vad.window_size / self.config.target_sample_rate
-        )
-        duration = end_time - speech_start_time
-
-        if duration < 0.1:
-            self._reset_state()
-            return
-
-        # CRITICAL: Get transcript BEFORE clearing the buffer!
-        result = await self._stt.transcribe()
-        transcript = result.text
-
-        # Now safe to reset state (clears STT buffer)
-        self._reset_state()
-
-        # Log speech end for debugging
-        logger.info(f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript[:50]}...' " if len(transcript) > 50 else f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript}'")
-
-        # Calculate silence duration for turn detection
-        silence_duration_ms = silence_frames * self._vad.window_size / self.config.target_sample_rate * 1000
-
-        # Detect turn with improved fusion scoring
-        turn_result = self._turn_detector.detect(
-            transcript=transcript,
-            duration=duration,
-            silence_duration_ms=silence_duration_ms
-        )
-
-        # Update stats
-        self.turn_count += 1
-        self.total_speech_time += duration
-
-        if turn_result.decision == TurnDecision.COMPLETE:
-            self.complete_turns += 1
-        else:
-            self.incomplete_turns += 1
-
-        # Emit turn event
-        event = TurnEvent(
-            type="turn_complete",
+        self._stt_session = StreamingSTTSession(
+            stt=self._streaming_stt,
             call_id=self.call_id,
             speaker=self.speaker,
-            start_time=round(speech_start_time, 3),
-            end_time=round(end_time, 3),
-            transcript=transcript,
-            decision=turn_result.decision.value,
-            fusion_score=turn_result.fusion_score,
         )
-        self.on_turn(event)
 
-    def _reset_state(self):
+        # Reset transcript state
+        self._interim_transcript = ""
+        self._final_transcript = ""
+        self._waiting_for_final = False
+
+        await self._stt_session.start(self._on_streaming_result)
+
+    async def _finalize_turn(self):
+        """Finalize current turn and emit event."""
+        async with self._finalize_lock:
+            # Capture state immediately to avoid race condition
+            speech_start_time = self._speech_start_time
+            silence_frames = self._silence_frames
+            current_time = self._current_time
+
+            if speech_start_time is None:
+                return
+
+            end_time = current_time - (
+                silence_frames * self._vad.window_size / self.config.target_sample_rate
+            )
+            duration = end_time - speech_start_time
+
+            if duration < (self.config.min_speech_ms / 1000):
+                await self._reset_state()
+                return
+
+            # Stop streaming session and wait for final result
+            if self._stt_session:
+                await self._stt_session.stop()
+                self._stt_session = None
+
+                # Wait briefly for final result if we only have interim
+                if not self._final_transcript and self._interim_transcript:
+                    await asyncio.sleep(0.2)
+
+            # Use final transcript if available, otherwise interim
+            transcript = self._final_transcript or self._interim_transcript
+
+            # Now safe to reset state
+            await self._reset_state()
+
+            # Log speech end for debugging
+            logger.info(f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript[:50]}...' " if len(transcript) > 50 else f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript}'")
+
+            # Calculate silence duration for turn detection
+            silence_duration_ms = silence_frames * self._vad.window_size / self.config.target_sample_rate * 1000
+
+            # Detect turn with improved fusion scoring
+            turn_result = self._turn_detector.detect(
+                transcript=transcript,
+                duration=duration,
+                silence_duration_ms=silence_duration_ms
+            )
+
+            # Update stats
+            self.turn_count += 1
+            self.total_speech_time += duration
+
+            if turn_result.decision == TurnDecision.COMPLETE:
+                self.complete_turns += 1
+            else:
+                self.incomplete_turns += 1
+
+            # Emit turn event
+            event = TurnEvent(
+                type="turn_complete",
+                call_id=self.call_id,
+                speaker=self.speaker,
+                start_time=round(speech_start_time, 3),
+                end_time=round(end_time, 3),
+                transcript=transcript,
+                decision=turn_result.decision.value,
+                fusion_score=turn_result.fusion_score,
+            )
+            self.on_turn(event)
+
+    async def _reset_state(self):
         """Reset turn state."""
         self._is_speaking = False
         self._speech_start_time = None
         self._silence_frames = 0
-        self._stt.clear()
+
+        # Clean up streaming state
+        self._interim_transcript = ""
+        self._final_transcript = ""
+        self._waiting_for_final = False
+
+        if self._stt_session:
+            await self._stt_session.stop()
+            self._stt_session = None
 
     def get_stats(self) -> dict:
         """Get processing stats."""
@@ -303,9 +370,11 @@ class SpeakerProcessor:
             "total_speech_time": round(self.total_speech_time, 2),
         }
 
-    def shutdown(self):
+    async def shutdown(self):
         """Shutdown processor."""
-        self._stt.shutdown()
+        if self._stt_session:
+            await self._stt_session.stop()
+        await self._streaming_stt.close()
 
 
 class AICCPipeline:
@@ -452,9 +521,9 @@ class AICCPipeline:
 
         # Shutdown processors
         if self._customer_processor:
-            self._customer_processor.shutdown()
+            await self._customer_processor.shutdown()
         if self._agent_processor:
-            self._agent_processor.shutdown()
+            await self._agent_processor.shutdown()
 
         # Stop WebSocket
         if self._ws_manager:

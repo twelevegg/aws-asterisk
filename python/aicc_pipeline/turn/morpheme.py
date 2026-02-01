@@ -85,7 +85,7 @@ class KoreanMorphemeAnalyzer:
             - < 0.5: Likely incomplete
         """
         if not text or not text.strip():
-            return 0.5
+            return 0.1
 
         text = text.strip()
 
