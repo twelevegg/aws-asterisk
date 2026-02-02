@@ -119,6 +119,17 @@ class PipelineConfig:
         default_factory=lambda: float(os.getenv("AICC_TURN_COMPLETE_THRESHOLD", "0.65"))
     )
 
+    # Continuous streaming settings
+    stt_session_rotation_sec: float = field(
+        default_factory=lambda: float(os.getenv("AICC_STT_ROTATION_SEC", "270"))
+    )
+    turn_boundary_min_silence_ms: float = field(
+        default_factory=lambda: float(os.getenv("AICC_TURN_MIN_SILENCE_MS", "500"))
+    )
+    turn_boundary_min_chars: int = field(
+        default_factory=lambda: int(os.getenv("AICC_TURN_MIN_CHARS", "1"))
+    )
+
     # Debug
     debug: bool = field(
         default_factory=lambda: os.getenv("AICC_DEBUG", "false").lower() == "true"

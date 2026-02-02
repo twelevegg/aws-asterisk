@@ -33,8 +33,8 @@ def _safe_task(coro, name: str = "task"):
             logger.error(f"Async task '{name}' failed: {e}")
     return asyncio.create_task(wrapper())
 from ..vad import create_vad, BaseVAD, AdaptiveEnergyVAD
-from ..stt import StreamingSTT, StreamingSTTSession, StreamingResult
-from ..turn import TurnDetector, TurnDecision
+from ..stt import StreamingSTT, StreamingSTTSession, StreamingResult, ContinuousSTTSession
+from ..turn import TurnDetector, TurnDecision, TurnBoundaryDetector
 from ..websocket import WebSocketManager
 from .udp_receiver import UDPReceiver
 
@@ -121,7 +121,7 @@ class SpeakerProcessor:
             model="telephony",
             sample_rate=config.target_sample_rate,
         )
-        self._stt_session: Optional[StreamingSTTSession] = None
+        self._continuous_session: Optional[ContinuousSTTSession] = None
 
         # Turn detector (improved weighted fusion)
         self._turn_detector = TurnDetector(
@@ -130,6 +130,9 @@ class SpeakerProcessor:
             silence_weight=config.turn_silence_weight,
             complete_threshold=config.turn_complete_threshold,
         )
+
+        # Turn boundary detector for continuous streaming
+        self._turn_boundary_detector: Optional[TurnBoundaryDetector] = None
 
         # State
         self._audio_buffer = np.array([], dtype=np.int16)
@@ -154,6 +157,20 @@ class SpeakerProcessor:
         self.incomplete_turns = 0
         self.total_speech_time = 0.0
 
+    async def start_session(self) -> None:
+        """STT 세션 시작. UDP receiver 준비 후 호출."""
+        self._continuous_session = ContinuousSTTSession(
+            stt=self._streaming_stt,
+            call_id=self.call_id,
+            speaker=self.speaker,
+        )
+        self._turn_boundary_detector = TurnBoundaryDetector(
+            turn_detector=self._turn_detector,
+            min_silence_ms=self.config.turn_boundary_min_silence_ms if hasattr(self.config, 'turn_boundary_min_silence_ms') else 500,
+        )
+        await self._continuous_session.start(self._on_streaming_result)
+        logger.info(f"[{self.speaker}] Continuous STT session started")
+
     async def _on_streaming_result(self, result: StreamingResult):
         """Handle streaming STT results."""
         if result.is_final:
@@ -162,6 +179,10 @@ class SpeakerProcessor:
         else:
             self._interim_transcript = result.transcript
             logger.debug(f"[{self.speaker}] Interim STT result: '{result.transcript}'")
+
+        # Feed result to turn boundary detector
+        if self._turn_boundary_detector:
+            self._turn_boundary_detector.on_stt_result(result, self._current_time)
 
     def process_audio(self, pcm_bytes: bytes):
         """Process PCM audio chunk."""
@@ -220,63 +241,36 @@ class SpeakerProcessor:
 
     def _process_vad_state(self, is_speech: bool, audio_bytes: bytes):
         """Process VAD state and detect turns with adaptive silence detection."""
+        # Always feed audio to continuous session
+        if self._continuous_session:
+            _safe_task(self._continuous_session.feed_audio(audio_bytes), "feed_audio")
+
         if is_speech:
             self._silence_frames = 0
 
             if not self._is_speaking:
                 self._is_speaking = True
                 self._speech_start_time = self._current_time
-                self._startup_audio_buffer = []  # Reset buffer
-                # Start streaming session
-                _safe_task(self._start_streaming_session(), "start_streaming")
-
-            # Buffer audio if session not ready, otherwise feed directly
-            if self._stt_session is None:
-                self._startup_audio_buffer.append(audio_bytes)
-            else:
-                # Feed any buffered audio first
-                if self._startup_audio_buffer:
-                    for buffered in self._startup_audio_buffer:
-                        _safe_task(self._stt_session.feed_audio(buffered), "feed_buffered_audio")
-                    self._startup_audio_buffer = []
-                _safe_task(self._stt_session.feed_audio(audio_bytes), "feed_audio")
         else:
             if self._is_speaking:
                 self._silence_frames += 1
 
-                # Use adaptive silence threshold
-                min_silence_ms = self._get_adaptive_silence_ms()
-                min_silence_frames = int(
-                    min_silence_ms * self.config.target_sample_rate /
-                    (self._vad.window_size * 1000)
-                )
+                # Calculate silence duration in ms
+                window_ms = (self._vad.window_size / self.config.target_sample_rate) * 1000
+                silence_ms = self._silence_frames * window_ms
 
-                if self._silence_frames >= min_silence_frames:
-                    # CRITICAL: Set _is_speaking=False IMMEDIATELY to prevent duplicate finalize calls
-                    # The async _finalize_turn() would otherwise be called multiple times
-                    self._is_speaking = False
-                    _safe_task(self._finalize_turn(), "finalize_turn")
+                # Check turn boundary via detector
+                if self._turn_boundary_detector:
+                    turn_result = self._turn_boundary_detector.on_vad_silence(
+                        silence_ms, self._current_time
+                    )
+                    if turn_result:
+                        # Turn boundary detected, emit turn event
+                        self._is_speaking = False
+                        _safe_task(self._emit_turn(turn_result), "emit_turn")
 
-    async def _start_streaming_session(self):
-        """Start a new streaming STT session."""
-        if self._stt_session:
-            await self._stt_session.stop()
-
-        self._stt_session = StreamingSTTSession(
-            stt=self._streaming_stt,
-            call_id=self.call_id,
-            speaker=self.speaker,
-        )
-
-        # Reset transcript state
-        self._interim_transcript = ""
-        self._final_transcript = ""
-        self._waiting_for_final = False
-
-        await self._stt_session.start(self._on_streaming_result)
-
-    async def _finalize_turn(self):
-        """Finalize current turn and emit event."""
+    async def _emit_turn(self, turn_result):
+        """Emit turn event without stopping session."""
         async with self._finalize_lock:
             # Capture state immediately to avoid race condition
             speech_start_time = self._speech_start_time
@@ -295,33 +289,19 @@ class SpeakerProcessor:
                 await self._reset_state()
                 return
 
-            # Stop streaming session and wait for final result
-            if self._stt_session:
-                await self._stt_session.stop()
-                self._stt_session = None
+            # Get transcript snapshot from continuous session
+            transcript = turn_result.transcript if hasattr(turn_result, 'transcript') else (self._final_transcript or self._interim_transcript)
 
-                # Wait briefly for final result if we only have interim
-                if not self._final_transcript and self._interim_transcript:
-                    await asyncio.sleep(0.2)
-
-            # Use final transcript if available, otherwise interim
-            transcript = self._final_transcript or self._interim_transcript
+            # Skip empty turns
+            if not transcript.strip():
+                await self._reset_state()
+                return
 
             # Now safe to reset state
             await self._reset_state()
 
             # Log speech end for debugging
             logger.info(f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript[:50]}...' " if len(transcript) > 50 else f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript}'")
-
-            # Calculate silence duration for turn detection
-            silence_duration_ms = silence_frames * self._vad.window_size / self.config.target_sample_rate * 1000
-
-            # Detect turn with improved fusion scoring
-            turn_result = self._turn_detector.detect(
-                transcript=transcript,
-                duration=duration,
-                silence_duration_ms=silence_duration_ms
-            )
 
             # Update stats
             self.turn_count += 1
@@ -356,9 +336,9 @@ class SpeakerProcessor:
         self._final_transcript = ""
         self._waiting_for_final = False
 
-        if self._stt_session:
-            await self._stt_session.stop()
-            self._stt_session = None
+        # Reset turn boundary detector state
+        if self._turn_boundary_detector:
+            self._turn_boundary_detector.reset()
 
     def get_stats(self) -> dict:
         """Get processing stats."""
@@ -375,10 +355,17 @@ class SpeakerProcessor:
         # Flush pending turn if speaker was mid-speech
         if self._is_speaking and self._speech_start_time is not None:
             logger.info(f"[{self.speaker}] Flushing pending turn on shutdown")
-            await self._finalize_turn()
+            # Check if there's a pending turn in the boundary detector
+            if self._turn_boundary_detector and self._turn_boundary_detector.has_pending_turn():
+                # Force emit with current silence
+                window_ms = (self._vad.window_size / self.config.target_sample_rate) * 1000
+                silence_ms = self._silence_frames * window_ms
+                turn_result = self._turn_boundary_detector.on_vad_silence(silence_ms, self._current_time)
+                if turn_result:
+                    await self._emit_turn(turn_result)
 
-        if self._stt_session:
-            await self._stt_session.stop()
+        if self._continuous_session:
+            await self._continuous_session.stop()
         await self._streaming_stt.close()
 
 
@@ -476,6 +463,12 @@ class AICCPipeline:
             port=self.config.agent_port,
             speaker="agent",
             on_audio=self._on_audio,
+        )
+
+        # Start continuous STT sessions before receiving audio
+        await asyncio.gather(
+            self._customer_processor.start_session(),
+            self._agent_processor.start_session(),
         )
 
         # Start UDP receivers
