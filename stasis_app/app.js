@@ -211,14 +211,57 @@ async function main() {
                 console.log(`[${callId}] Allocated ports - Customer: ${ports.customer}, Agent: ${ports.agent}`);
 
                 // 3. Select next available agent (checks ARI registration)
-                const agent = await agentRouter.getNextAvailable();
+                let agent = await agentRouter.getNextAvailable();
 
-                // If all agents busy, reject the call
+                // If no agents available, play hold music and wait for one
                 if (!agent) {
-                    console.log(`[${callId}] No available agents - rejecting call`);
-                    portPool.release(ports);
-                    await channel.hangup();
-                    return;
+                    console.log(`[${callId}] No available agents - playing hold music`);
+
+                    try {
+                        await channel.startMoh();
+                        console.log(`[${callId}] Hold music started`);
+                    } catch (mohErr) {
+                        console.log(`[${callId}] MoH not available, waiting silently`);
+                    }
+
+                    // Wait for agent with periodic checks (max 60 seconds)
+                    const maxWaitTime = 60000; // 60 seconds
+                    const checkInterval = 3000; // Check every 3 seconds
+                    const startWait = Date.now();
+
+                    while (!agent && (Date.now() - startWait) < maxWaitTime) {
+                        await new Promise(resolve => setTimeout(resolve, checkInterval));
+
+                        // Check if customer hung up
+                        try {
+                            await client.channels.get({ channelId: channel.id });
+                        } catch (e) {
+                            console.log(`[${callId}] Customer hung up while waiting`);
+                            portPool.release(ports);
+                            return;
+                        }
+
+                        agent = await agentRouter.getNextAvailable();
+                        if (agent) {
+                            console.log(`[${callId}] Agent became available after ${((Date.now() - startWait) / 1000).toFixed(1)}s`);
+                            try {
+                                await channel.stopMoh();
+                            } catch (e) {
+                                // MoH might not be playing
+                            }
+                        }
+                    }
+
+                    // Still no agent after max wait time
+                    if (!agent) {
+                        console.log(`[${callId}] No agents available after ${maxWaitTime / 1000}s - disconnecting`);
+                        portPool.release(ports);
+                        try {
+                            await channel.stopMoh();
+                        } catch (e) {}
+                        await channel.hangup();
+                        return;
+                    }
                 }
 
                 console.log(`[${callId}] Selected agent: ${agent.id} (${agent.endpoint})`);
