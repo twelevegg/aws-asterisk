@@ -4,7 +4,7 @@ AICC Pipeline Orchestrator.
 Main entry point that coordinates all components:
 - UDP receivers for customer/agent audio
 - VAD for speech detection
-- STT for transcription
+- STT for transcription (batch mode)
 - Turn detection for conversation analysis
 - WebSocket for event output
 """
@@ -14,7 +14,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 from uuid import uuid4
 
 import numpy as np
@@ -32,9 +32,11 @@ def _safe_task(coro, name: str = "task"):
         except Exception as e:
             logger.error(f"Async task '{name}' failed: {e}")
     return asyncio.create_task(wrapper())
-from ..vad import create_vad, BaseVAD, AdaptiveEnergyVAD
-from ..stt import StreamingSTT, StreamingSTTSession, StreamingResult, ContinuousSTTSession
-from ..turn import TurnDetector, TurnDecision, TurnBoundaryDetector
+
+
+from ..vad import create_vad, BaseVAD
+from ..stt import GoogleCloudSTT
+from ..turn import TurnDetector, TurnDecision
 from ..websocket import WebSocketManager
 from .udp_receiver import UDPReceiver
 
@@ -92,7 +94,7 @@ class TurnEvent:
 
 
 class SpeakerProcessor:
-    """Process audio for a single speaker."""
+    """Process audio for a single speaker with batch STT."""
 
     def __init__(
         self,
@@ -114,16 +116,14 @@ class SpeakerProcessor:
             min_silence_ms=config.min_silence_ms,
         )
 
-        # Streaming STT
-        self._streaming_stt = StreamingSTT(
-            project_id=config.gcp_project_id,
-            language_code=config.stt_language,
-            model="telephony",
+        # Batch STT (simple approach)
+        self._stt = GoogleCloudSTT(
+            credentials_path=config.gcp_credentials_path,
+            language=config.stt_language,
             sample_rate=config.target_sample_rate,
         )
-        self._continuous_session: Optional[ContinuousSTTSession] = None
 
-        # Turn detector (improved weighted fusion)
+        # Turn detector for morpheme analysis
         self._turn_detector = TurnDetector(
             morpheme_weight=config.turn_morpheme_weight,
             duration_weight=config.turn_duration_weight,
@@ -131,62 +131,18 @@ class SpeakerProcessor:
             complete_threshold=config.turn_complete_threshold,
         )
 
-        # Turn boundary detector for continuous streaming
-        self._turn_boundary_detector: Optional[TurnBoundaryDetector] = None
-
         # State
         self._audio_buffer = np.array([], dtype=np.int16)
         self._current_time = 0.0
         self._is_speaking = False
         self._speech_start_time: Optional[float] = None
         self._silence_frames = 0
-        self._vad_frame_count = 0  # For debugging
-
-        # Streaming STT state
-        self._interim_transcript = ""
-        self._final_transcript = ""
-        self._waiting_for_final = False
-        self._startup_audio_buffer: list[bytes] = []
-
-        # Lock to prevent duplicate finalize calls
-        self._finalize_lock = asyncio.Lock()
 
         # Stats
         self.turn_count = 0
         self.complete_turns = 0
         self.incomplete_turns = 0
         self.total_speech_time = 0.0
-
-    async def start_session(self) -> None:
-        """STT 세션 시작. UDP receiver 준비 후 호출."""
-        self._continuous_session = ContinuousSTTSession(
-            stt=self._streaming_stt,
-            call_id=self.call_id,
-            speaker=self.speaker,
-        )
-        self._turn_boundary_detector = TurnBoundaryDetector(
-            turn_detector=self._turn_detector,
-            min_silence_ms=self.config.turn_boundary_min_silence_ms if hasattr(self.config, 'turn_boundary_min_silence_ms') else 500,
-        )
-        await self._continuous_session.start(self._on_streaming_result)
-        logger.info(f"[{self.speaker}] Continuous STT session started")
-
-    async def _on_streaming_result(self, result: StreamingResult):
-        """Handle streaming STT results."""
-        if result.is_final:
-            self._final_transcript = result.transcript
-            logger.debug(f"[{self.speaker}] Final STT result: '{result.transcript}'")
-        else:
-            self._interim_transcript = result.transcript
-            logger.debug(f"[{self.speaker}] Interim STT result: '{result.transcript}'")
-
-        # Feed result to turn boundary detector
-        if self._turn_boundary_detector:
-            deferred_turn = self._turn_boundary_detector.on_stt_result(result, self._current_time)
-            if deferred_turn:
-                # Deferred turn was emitted due to late final result
-                self._is_speaking = False
-                _safe_task(self._emit_turn(deferred_turn), "emit_deferred_turn")
 
     def process_audio(self, pcm_bytes: bytes):
         """Process PCM audio chunk."""
@@ -195,10 +151,6 @@ class SpeakerProcessor:
 
         window_size = self._vad.window_size
 
-        # Log first audio receipt
-        if self._vad_frame_count == 0 and len(self._audio_buffer) >= window_size:
-            logger.info(f"[{self.speaker}] First audio chunk received, buffer={len(self._audio_buffer)} samples")
-
         while len(self._audio_buffer) >= window_size:
             window = self._audio_buffer[:window_size]
             self._audio_buffer = self._audio_buffer[window_size:]
@@ -206,48 +158,15 @@ class SpeakerProcessor:
             window_bytes = window.tobytes()
             is_speech = self._vad.is_speech(window_bytes)
 
-            # Track VAD frame count for debugging
-            self._vad_frame_count += 1
-
-            # Log VAD state changes
-            if is_speech and not self._is_speaking:
-                rms = np.sqrt(np.mean(window.astype(np.float32) ** 2))
-                logger.info(f"[{self.speaker}] Speech START at {self._current_time:.2f}s (RMS={rms:.0f})")
-            elif not is_speech and self._is_speaking and self._silence_frames == 0:
-                logger.debug(f"[{self.speaker}] Silence detected at {self._current_time:.2f}s")
-
             self._process_vad_state(is_speech, window_bytes)
             self._current_time += window_size / self.config.target_sample_rate
 
-    def _get_adaptive_silence_ms(self) -> float:
-        """
-        Get adaptive silence threshold based on speech duration.
-
-        Uses AdaptiveEnergyVAD if available, otherwise falls back to config.
-        """
-        if self._speech_start_time is None:
-            return self.config.min_silence_ms
-
-        speech_duration = self._current_time - self._speech_start_time
-
-        # Use adaptive VAD method if available
-        if isinstance(self._vad, AdaptiveEnergyVAD):
-            return self._vad.get_adaptive_silence_ms(speech_duration)
-
-        # Fallback: simple adaptive logic
-        # Increased thresholds to prevent false turn endings in telephony audio
-        if speech_duration < 0.5:
-            return 350.0  # Short response (was 200ms, too aggressive)
-        elif speech_duration < 2.0:
-            return 450.0  # Normal utterance (was 300ms)
-        else:
-            return self.config.min_silence_ms  # Long, use default
-
     def _process_vad_state(self, is_speech: bool, audio_bytes: bytes):
-        """Process VAD state and detect turns with adaptive silence detection."""
-        # Always feed audio to continuous session
-        if self._continuous_session:
-            _safe_task(self._continuous_session.feed_audio(audio_bytes), "feed_audio")
+        """Process VAD state and detect turns."""
+        min_silence_frames = int(
+            self.config.min_silence_ms * self.config.target_sample_rate /
+            (self._vad.window_size * 1000)
+        )
 
         if is_speech:
             self._silence_frames = 0
@@ -255,94 +174,91 @@ class SpeakerProcessor:
             if not self._is_speaking:
                 self._is_speaking = True
                 self._speech_start_time = self._current_time
+                logger.info(f"[{self.speaker}] Speech START at {self._current_time:.2f}s")
+
+            # Buffer audio for batch STT
+            self._stt.add_audio(audio_bytes)
         else:
             if self._is_speaking:
                 self._silence_frames += 1
 
-                # Calculate silence duration in ms
-                window_ms = (self._vad.window_size / self.config.target_sample_rate) * 1000
-                silence_ms = self._silence_frames * window_ms
+                if self._silence_frames >= min_silence_frames:
+                    self._finalize_turn()
 
-                # Check turn boundary via detector
-                if self._turn_boundary_detector:
-                    turn_result = self._turn_boundary_detector.on_vad_silence(
-                        silence_ms, self._current_time
-                    )
-                    if turn_result:
-                        # Turn boundary detected, emit turn event
-                        self._is_speaking = False
-                        _safe_task(self._emit_turn(turn_result), "emit_turn")
+    def _finalize_turn(self):
+        """Finalize current turn with batch STT."""
+        if not self._speech_start_time:
+            return
 
-    async def _emit_turn(self, turn_result):
-        """Emit turn event without stopping session."""
-        async with self._finalize_lock:
-            # Capture state immediately to avoid race condition
-            speech_start_time = self._speech_start_time
-            silence_frames = self._silence_frames
-            current_time = self._current_time
+        end_time = self._current_time - (
+            self._silence_frames * self._vad.window_size / self.config.target_sample_rate
+        )
+        duration = end_time - self._speech_start_time
 
-            if speech_start_time is None:
-                return
+        if duration < (self.config.min_speech_ms / 1000):
+            self._reset_state()
+            return
 
-            end_time = current_time - (
-                silence_frames * self._vad.window_size / self.config.target_sample_rate
+        # Get transcript via batch STT (synchronous)
+        transcript = self._stt.get_transcript()
+
+        # Skip empty transcripts
+        if not transcript.strip():
+            logger.debug(f"[{self.speaker}] Empty transcript, skipping")
+            self._reset_state()
+            return
+
+        # Calculate silence duration in ms
+        silence_ms = self._silence_frames * (self._vad.window_size / self.config.target_sample_rate) * 1000
+
+        # Use TurnDetector for morpheme analysis
+        turn_result = self._turn_detector.detect(
+            transcript=transcript,
+            duration=duration,
+            silence_duration_ms=silence_ms
+        )
+
+        if len(transcript) > 50:
+            logger.info(
+                f"[{self.speaker}] Speech END at {end_time:.2f}s, "
+                f"duration={duration:.2f}s, transcript='{transcript[:50]}...'"
             )
-            duration = end_time - speech_start_time
-
-            if duration < (self.config.min_speech_ms / 1000):
-                await self._reset_state()
-                return
-
-            # Get transcript snapshot from continuous session
-            transcript = turn_result.transcript if hasattr(turn_result, 'transcript') else (self._final_transcript or self._interim_transcript)
-
-            # Skip empty turns
-            if not transcript.strip():
-                await self._reset_state()
-                return
-
-            # Now safe to reset state
-            await self._reset_state()
-
-            # Log speech end for debugging
-            logger.info(f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript[:50]}...' " if len(transcript) > 50 else f"[{self.speaker}] Speech END at {end_time:.2f}s, duration={duration:.2f}s, transcript='{transcript}'")
-
-            # Update stats
-            self.turn_count += 1
-            self.total_speech_time += duration
-
-            if turn_result.decision == TurnDecision.COMPLETE:
-                self.complete_turns += 1
-            else:
-                self.incomplete_turns += 1
-
-            # Emit turn event
-            event = TurnEvent(
-                type="turn_complete",
-                call_id=self.call_id,
-                speaker=self.speaker,
-                start_time=round(speech_start_time, 3),
-                end_time=round(end_time, 3),
-                transcript=transcript,
-                decision=turn_result.decision.value,
-                fusion_score=turn_result.fusion_score,
+        else:
+            logger.info(
+                f"[{self.speaker}] Speech END at {end_time:.2f}s, "
+                f"duration={duration:.2f}s, transcript='{transcript}'"
             )
-            self.on_turn(event)
 
-    async def _reset_state(self):
+        # Update stats
+        self.turn_count += 1
+        self.total_speech_time += duration
+
+        if turn_result.decision == TurnDecision.COMPLETE:
+            self.complete_turns += 1
+        else:
+            self.incomplete_turns += 1
+
+        # Emit turn event
+        event = TurnEvent(
+            type="turn_complete",
+            call_id=self.call_id,
+            speaker=self.speaker,
+            start_time=round(self._speech_start_time, 3),
+            end_time=round(end_time, 3),
+            transcript=transcript,
+            decision=turn_result.decision.value,
+            fusion_score=turn_result.fusion_score,
+        )
+        self.on_turn(event)
+
+        self._reset_state()
+
+    def _reset_state(self):
         """Reset turn state."""
         self._is_speaking = False
         self._speech_start_time = None
         self._silence_frames = 0
-
-        # Clean up streaming state
-        self._interim_transcript = ""
-        self._final_transcript = ""
-        self._waiting_for_final = False
-
-        # Reset turn boundary detector state
-        if self._turn_boundary_detector:
-            self._turn_boundary_detector.reset()
+        self._stt.clear()
 
     def get_stats(self) -> dict:
         """Get processing stats."""
@@ -355,22 +271,11 @@ class SpeakerProcessor:
         }
 
     async def shutdown(self):
-        """Shutdown processor and flush pending turn data."""
-        # Flush pending turn if speaker was mid-speech
+        """Shutdown processor."""
+        # Flush pending turn if mid-speech
         if self._is_speaking and self._speech_start_time is not None:
             logger.info(f"[{self.speaker}] Flushing pending turn on shutdown")
-            # Check if there's a pending turn in the boundary detector
-            if self._turn_boundary_detector and self._turn_boundary_detector.has_pending_turn():
-                # Force emit with current silence
-                window_ms = (self._vad.window_size / self.config.target_sample_rate) * 1000
-                silence_ms = self._silence_frames * window_ms
-                turn_result = self._turn_boundary_detector.on_vad_silence(silence_ms, self._current_time)
-                if turn_result:
-                    await self._emit_turn(turn_result)
-
-        if self._continuous_session:
-            await self._continuous_session.stop()
-        await self._streaming_stt.close()
+            self._finalize_turn()
 
 
 class AICCPipeline:
@@ -467,12 +372,6 @@ class AICCPipeline:
             port=self.config.agent_port,
             speaker="agent",
             on_audio=self._on_audio,
-        )
-
-        # Start continuous STT sessions before receiving audio
-        await asyncio.gather(
-            self._customer_processor.start_session(),
-            self._agent_processor.start_session(),
         )
 
         # Start UDP receivers
