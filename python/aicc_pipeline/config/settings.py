@@ -75,13 +75,13 @@ class PipelineConfig:
 
     # VAD settings
     vad_threshold: float = field(
-        default_factory=lambda: float(os.getenv("AICC_VAD_THRESHOLD", "0.5"))
+        default_factory=lambda: float(os.getenv("AICC_VAD_THRESHOLD", "0.6"))
     )
     min_speech_ms: float = field(
         default_factory=lambda: float(os.getenv("AICC_MIN_SPEECH_MS", "250.0"))
     )
     min_silence_ms: float = field(
-        default_factory=lambda: float(os.getenv("AICC_MIN_SILENCE_MS", "400.0"))
+        default_factory=lambda: float(os.getenv("AICC_MIN_SILENCE_MS", "800.0"))
     )
 
     # WebSocket settings
