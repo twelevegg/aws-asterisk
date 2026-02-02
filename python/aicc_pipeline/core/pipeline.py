@@ -371,7 +371,12 @@ class SpeakerProcessor:
         }
 
     async def shutdown(self):
-        """Shutdown processor."""
+        """Shutdown processor and flush pending turn data."""
+        # Flush pending turn if speaker was mid-speech
+        if self._is_speaking and self._speech_start_time is not None:
+            logger.info(f"[{self.speaker}] Flushing pending turn on shutdown")
+            await self._finalize_turn()
+
         if self._stt_session:
             await self._stt_session.stop()
         await self._streaming_stt.close()
