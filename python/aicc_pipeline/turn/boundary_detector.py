@@ -70,7 +70,12 @@ class TurnBoundaryDetector:
         self._last_final_time: Optional[float] = None
         self._speech_start_time: Optional[float] = None
 
-    def on_stt_result(self, result: StreamingResult, current_time: float) -> None:
+        # Waiting for final result state (race condition fix)
+        self._waiting_for_final: bool = False
+        self._silence_detected_time: Optional[float] = None
+        self._pending_silence_ms: float = 0
+
+    def on_stt_result(self, result: StreamingResult, current_time: float) -> Optional[TurnResult]:
         """
         Process STT result (interim or final).
 
@@ -80,10 +85,13 @@ class TurnBoundaryDetector:
         Args:
             result: Streaming STT result
             current_time: Current timestamp in seconds
+
+        Returns:
+            TurnResult if deferred turn can now be emitted, None otherwise
         """
         if not result.is_final:
             # Interim results: ignore (used for display only)
-            return
+            return None
 
         # Final result: accumulate
         if self._pending_transcript:
@@ -101,6 +109,33 @@ class TurnBoundaryDetector:
             f"Accumulated final result: '{result.transcript}' "
             f"(total pending: '{self._pending_transcript}')"
         )
+
+        # Check if we were waiting for final result after silence detection
+        if self._waiting_for_final:
+            elapsed = current_time - self._silence_detected_time if self._silence_detected_time else float('inf')
+            if elapsed < 1.0:  # 1 second grace period
+                logger.debug(
+                    f"Final result received within grace period ({elapsed:.3f}s), "
+                    f"emitting deferred turn"
+                )
+                # Emit the deferred turn immediately
+                deferred_turn = self._emit_deferred_turn(current_time)
+                # Reset waiting state
+                self._waiting_for_final = False
+                self._silence_detected_time = None
+                self._pending_silence_ms = 0
+                return deferred_turn
+            else:
+                # Too late, silence ended
+                logger.debug(
+                    f"Final result received after grace period ({elapsed:.3f}s), "
+                    f"continuing normal flow"
+                )
+                self._waiting_for_final = False
+                self._silence_detected_time = None
+                self._pending_silence_ms = 0
+
+        return None
 
     def on_vad_silence(
         self,
@@ -120,17 +155,24 @@ class TurnBoundaryDetector:
             TurnResult if turn boundary detected, None otherwise
 
         Edge Cases Handled:
-        - Silence before any final result → return None
+        - Silence before any final result → defer decision (wait for final)
         - Silence below threshold → return None
         - Empty/whitespace-only transcript → reset and return None
         - Transcript too short → reset and return None
         """
-        # No final results yet - ignore silence
-        if self._last_final_time is None:
-            return None
-
         # Silence threshold not met
         if silence_ms < self._min_silence_ms:
+            return None
+
+        # No final results yet - defer decision and wait for final result
+        if self._last_final_time is None:
+            if not self._waiting_for_final:
+                self._waiting_for_final = True
+                self._silence_detected_time = current_time
+                self._pending_silence_ms = silence_ms
+                logger.debug(
+                    f"Waiting for STT final result (silence={silence_ms}ms)"
+                )
             return None
 
         # Validate transcript (strip whitespace)
@@ -174,6 +216,57 @@ class TurnBoundaryDetector:
 
         return result
 
+    def _emit_deferred_turn(self, current_time: float) -> Optional[TurnResult]:
+        """
+        Helper method to emit a deferred turn when final result arrives.
+
+        Args:
+            current_time: Current timestamp in seconds
+
+        Returns:
+            TurnResult if valid turn, None if invalid (empty/too short)
+        """
+        # Validate transcript (strip whitespace)
+        stripped = self._pending_transcript.strip()
+        if len(stripped) < self._min_chars:
+            logger.debug(
+                f"Ignoring deferred turn: transcript too short ({len(stripped)} chars)"
+            )
+            self.reset()
+            return None
+
+        # Calculate speech duration
+        speech_duration_sec = (
+            current_time - self._speech_start_time
+            if self._speech_start_time
+            else 0.0
+        )
+
+        # Analyze with existing TurnDetector (morpheme fusion)
+        detector_result = self._turn_detector.detect(
+            transcript=stripped,
+            duration=speech_duration_sec,
+            silence_duration_ms=self._pending_silence_ms
+        )
+
+        # Prepare result
+        result = TurnResult(
+            transcript=stripped,
+            decision=detector_result.decision,
+            fusion_score=detector_result.fusion_score
+        )
+
+        logger.info(
+            f"Deferred turn boundary detected: '{stripped}' "
+            f"(decision={result.decision.value}, score={result.fusion_score:.3f}, "
+            f"duration={speech_duration_sec:.1f}s, silence={self._pending_silence_ms:.0f}ms)"
+        )
+
+        # Reset state for next turn
+        self.reset()
+
+        return result
+
     def has_pending_turn(self) -> bool:
         """
         Check if there's a pending turn waiting for silence threshold.
@@ -195,6 +288,9 @@ class TurnBoundaryDetector:
         self._pending_transcript = ""
         self._last_final_time = None
         self._speech_start_time = None
+        self._waiting_for_final = False
+        self._silence_detected_time = None
+        self._pending_silence_ms = 0
         logger.debug("Turn boundary detector reset")
 
     def get_pending_transcript(self) -> str:

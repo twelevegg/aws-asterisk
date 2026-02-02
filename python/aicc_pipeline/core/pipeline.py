@@ -182,7 +182,11 @@ class SpeakerProcessor:
 
         # Feed result to turn boundary detector
         if self._turn_boundary_detector:
-            self._turn_boundary_detector.on_stt_result(result, self._current_time)
+            deferred_turn = self._turn_boundary_detector.on_stt_result(result, self._current_time)
+            if deferred_turn:
+                # Deferred turn was emitted due to late final result
+                self._is_speaking = False
+                _safe_task(self._emit_turn(deferred_turn), "emit_deferred_turn")
 
     def process_audio(self, pcm_bytes: bytes):
         """Process PCM audio chunk."""
