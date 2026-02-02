@@ -34,6 +34,13 @@ class AgentRouter {
         ];
         this.currentIndex = 0;
         this.ariClient = null;
+
+        // Priority mapping: SIP host -> preferred agent
+        this.priorityMap = {
+            'jonghwan@sip.linphone.org': 'agent03',
+            'ewanjee@sip.linphone.org': 'agent05',
+            'aivletest@sip.linphone.org': 'agent06'
+        };
     }
 
     setAriClient(client) {
@@ -91,6 +98,41 @@ class AgentRouter {
 
     getAgentById(agentId) {
         return this.agents.find(a => a.id === agentId);
+    }
+
+    async getSpecificAgent(agentId) {
+        const agent = this.getAgentById(agentId);
+        if (!agent) {
+            console.log(`[PRIORITY] Agent ${agentId} not found`);
+            return null;
+        }
+
+        const isRegistered = await this.isAgentRegistered(agent.id);
+        console.log(`[PRIORITY] ${agent.id}: registered=${isRegistered}, status=${agent.status}`);
+
+        if (isRegistered && agent.status === 'available') {
+            agent.status = 'busy';
+            return agent;
+        }
+
+        return null;
+    }
+
+    async selectAgent(callerHost) {
+        // 1. Check priority mapping first
+        const priorityAgentId = this.priorityMap[callerHost];
+        if (priorityAgentId) {
+            console.log(`[PRIORITY] ${callerHost} -> trying ${priorityAgentId}`);
+            const agent = await this.getSpecificAgent(priorityAgentId);
+            if (agent) {
+                console.log(`[PRIORITY] Matched: ${callerHost} -> ${agent.id}`);
+                return agent;
+            }
+            console.log(`[PRIORITY] ${priorityAgentId} not available, falling back to round-robin`);
+        }
+
+        // 2. Fallback to round-robin
+        return await this.getNextAvailable();
     }
 
     isAgentChannel(channelName) {
@@ -195,9 +237,19 @@ async function main() {
 
             const callId = uuidv4();
             const callerNumber = channel.caller.number || 'Unknown';
+            const callerName = channel.caller.name || '';
+            // Extract host from caller name (format: "name" <sip:user@host> or just user@host)
+            let callerHost = '';
+            const sipMatch = callerName.match(/<sip:([^>]+)>/) || callerName.match(/sip:(\S+)/);
+            if (sipMatch) {
+                callerHost = sipMatch[1];
+            } else if (callerName.includes('@')) {
+                callerHost = callerName;
+            }
 
             console.log('\n' + '='.repeat(60));
             console.log(`[${callId}] Incoming call from: ${callerNumber}`);
+            console.log(`[${callId}] Caller host: ${callerHost}`);
             console.log(`[${callId}] Customer channel: ${channel.id}`);
             console.log('='.repeat(60));
 
@@ -210,8 +262,8 @@ async function main() {
                 const ports = portPool.allocate();
                 console.log(`[${callId}] Allocated ports - Customer: ${ports.customer}, Agent: ${ports.agent}`);
 
-                // 3. Select next available agent (checks ARI registration)
-                let agent = await agentRouter.getNextAvailable();
+                // 3. Select agent (priority-based or round-robin)
+                let agent = await agentRouter.selectAgent(callerHost);
 
                 // If no agents available, play hold music and wait for one
                 if (!agent) {
@@ -241,7 +293,7 @@ async function main() {
                             return;
                         }
 
-                        agent = await agentRouter.getNextAvailable();
+                        agent = await agentRouter.selectAgent(callerHost);
                         if (agent) {
                             console.log(`[${callId}] Agent became available after ${((Date.now() - startWait) / 1000).toFixed(1)}s`);
                             try {
