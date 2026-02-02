@@ -184,6 +184,7 @@ class WebSocketManager:
         Queue event for sending.
 
         If queue is full, drops oldest event.
+        Filters out turn_complete events with empty transcripts.
 
         Args:
             event: Event object with to_dict() method, or dict
@@ -192,6 +193,13 @@ class WebSocketManager:
             event_dict = event.to_dict()
         else:
             event_dict = event
+
+        # Filter out turn_complete events with empty transcript
+        if event_dict.get('type') == 'turn_complete':
+            transcript = event_dict.get('transcript', '')
+            if not transcript or not transcript.strip():
+                logger.debug("Filtered out turn_complete with empty transcript")
+                return
 
         try:
             self._queue.put_nowait(event_dict)
