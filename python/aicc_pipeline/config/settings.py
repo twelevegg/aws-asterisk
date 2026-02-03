@@ -19,9 +19,10 @@ from typing import List, Optional
 def _get_gcp_project_id() -> str:
     """Extract project_id from GCP credentials JSON."""
     import json
+
     creds_path = os.getenv(
         "GOOGLE_APPLICATION_CREDENTIALS",
-        str(Path.home() / ".config/gcloud/credentials.json")
+        str(Path.home() / ".config/gcloud/credentials.json"),
     )
     try:
         with open(creds_path) as f:
@@ -50,6 +51,45 @@ def _get_ws_urls_from_env() -> List[str]:
         i += 1
 
     return urls
+
+
+def _split_phrases(value: str) -> List[str]:
+    """Split comma-separated phrase list and strip whitespace."""
+    phrases = []
+    for raw in value.split(","):
+        phrase = raw.strip()
+        if phrase:
+            phrases.append(phrase)
+    return phrases
+
+
+def _get_stt_phrases_from_env() -> List[str]:
+    """Collect STT phrase hints from env or file."""
+    phrases: List[str] = []
+
+    env_value = os.getenv("AICC_STT_PHRASES")
+    if env_value:
+        phrases.extend(_split_phrases(env_value))
+
+    phrases_path = os.getenv("AICC_STT_PHRASES_PATH")
+    if phrases_path:
+        try:
+            with open(phrases_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    phrase = line.strip()
+                    if phrase and not phrase.startswith("#"):
+                        phrases.append(phrase)
+        except Exception:
+            pass
+
+    seen = set()
+    unique_phrases = []
+    for phrase in phrases:
+        if phrase not in seen:
+            seen.add(phrase)
+            unique_phrases.append(phrase)
+
+    return unique_phrases
 
 
 @dataclass
@@ -97,10 +137,14 @@ class PipelineConfig:
     stt_language: str = field(
         default_factory=lambda: os.getenv("AICC_STT_LANGUAGE", "ko-KR")
     )
+    stt_phrases: List[str] = field(default_factory=_get_stt_phrases_from_env)
+    stt_phrase_boost: float = field(
+        default_factory=lambda: float(os.getenv("AICC_STT_PHRASE_BOOST", "10.0"))
+    )
     gcp_credentials_path: str = field(
         default_factory=lambda: os.getenv(
             "GOOGLE_APPLICATION_CREDENTIALS",
-            str(Path.home() / ".config/gcloud/credentials.json")
+            str(Path.home() / ".config/gcloud/credentials.json"),
         )
     )
     gcp_project_id: str = field(default_factory=_get_gcp_project_id)
@@ -138,6 +182,7 @@ class PipelineConfig:
     def __post_init__(self):
         """Validate and set defaults after initialization."""
         import logging
+
         logger = logging.getLogger("aicc.config")
 
         # Ensure at least one WebSocket URL
@@ -146,7 +191,9 @@ class PipelineConfig:
             if default_url:
                 self.ws_urls = [default_url]
             else:
-                logger.warning("No WebSocket URL configured. Set AICC_WS_URL environment variable.")
+                logger.warning(
+                    "No WebSocket URL configured. Set AICC_WS_URL environment variable."
+                )
 
     @property
     def primary_ws_url(self) -> Optional[str]:
