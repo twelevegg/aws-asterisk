@@ -66,6 +66,7 @@
           "cd $PROJECT_DIR",
           "",
           "# Git safe.directory 설정 (dubious ownership 방지)",
+          "export HOME=/home/ubuntu",
           "git config --global --add safe.directory $PROJECT_DIR",
           "",
           "echo 'Fetching latest code...'",
