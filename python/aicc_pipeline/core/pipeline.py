@@ -291,8 +291,10 @@ class AICCPipeline:
         self._agent_receiver: Optional[UDPReceiver] = None
         self._agent_receiver: Optional[UDPReceiver] = None
         self._start_time: Optional[float] = None
+        self._start_time: Optional[float] = None
         self._last_audio_time: float = 0.0 # [NEW] Track audio activity
         self._running = False
+        self._metadata_sent = False # [NEW] Track if metadata sent for current session
 
     async def _on_turn(self, event: TurnEvent):
         """Handle turn event."""
@@ -302,6 +304,18 @@ class AICCPipeline:
     def _on_audio(self, pcm_bytes: bytes, speaker: str):
         """Handle received audio."""
         self._last_audio_time = time.time() # [NEW] Update activity time
+
+        # [NEW] Send metadata on first audio of the session
+        if not self._metadata_sent and self._ws_manager:
+            self._metadata_sent = True
+            event = TurnEvent(
+                type="metadata_start",
+                call_id=self._call_id,
+                customer_number=self.config.customer_number or "unknown",
+                agent_id=self.config.agent_id or "unknown",
+            )
+            # Use safe task to avoid blocking sync audio callback
+            _safe_task(self._ws_manager.send(event), "send_metadata_start_delayed")
 
         processor = (
             self._customer_processor
@@ -462,15 +476,9 @@ class AICCPipeline:
                 if self._customer_processor: self._customer_processor.call_id = self._call_id
                 if self._agent_processor: self._agent_processor.call_id = self._call_id
                 
-                # Send Start for new call
-                if self._ws_manager:
-                    event = TurnEvent(
-                        type="metadata_start",
-                        call_id=self._call_id,
-                        customer_number=self.config.customer_number or "unknown",
-                        agent_id=self.config.agent_id or "unknown",
-                    )
-                    await self._ws_manager.send(event)
+                # [FIX] Do NOT send metadata_start here. Wait for audio.
+                # Reset flag so next audio triggers it
+                self._metadata_sent = False
                 
                 # Reset timer
                 self._last_audio_time = time.time()
