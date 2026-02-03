@@ -289,7 +289,9 @@ class AICCPipeline:
         self._agent_processor: Optional[SpeakerProcessor] = None
         self._customer_receiver: Optional[UDPReceiver] = None
         self._agent_receiver: Optional[UDPReceiver] = None
+        self._agent_receiver: Optional[UDPReceiver] = None
         self._start_time: Optional[float] = None
+        self._last_audio_time: float = 0.0 # [NEW] Track audio activity
         self._running = False
 
     async def _on_turn(self, event: TurnEvent):
@@ -299,6 +301,8 @@ class AICCPipeline:
 
     def _on_audio(self, pcm_bytes: bytes, speaker: str):
         """Handle received audio."""
+        self._last_audio_time = time.time() # [NEW] Update activity time
+
         processor = (
             self._customer_processor
             if speaker == "customer"
@@ -325,6 +329,10 @@ class AICCPipeline:
         self._running = True
         self._call_id = self.config.call_id or str(uuid4())
         self._start_time = time.time()
+        self._last_audio_time = time.time() # [NEW]
+        
+        # [NEW] Start idle monitor
+        asyncio.create_task(self._monitor_idle())
 
         logger.info("=" * 60)
         logger.info("AICC Pipeline Starting")
@@ -433,3 +441,36 @@ class AICCPipeline:
         logger.info("=" * 60)
         logger.info("Pipeline Stopped")
         logger.info("=" * 60)
+
+    # [NEW] Idle monitor
+    async def _monitor_idle(self):
+        """Monitor for silence/idle to rotate session."""
+        idle_timeout = 30.0 # 30 seconds silence = New Call
+        logger.info(f"Idle monitor started (timeout: {idle_timeout}s)")
+        
+        while self._running:
+            await asyncio.sleep(1.0)
+            if time.time() - self._last_audio_time > idle_timeout:
+                logger.info(f"Session idle > {idle_timeout}s. Rotating Call ID...")
+                
+                # Generate New ID
+                old_id = self._call_id
+                self._call_id = str(uuid4())
+                logger.info(f"Rotated Call ID: {old_id} -> {self._call_id}")
+                
+                # Update processors with new ID
+                if self._customer_processor: self._customer_processor.call_id = self._call_id
+                if self._agent_processor: self._agent_processor.call_id = self._call_id
+                
+                # Send Start for new call
+                if self._ws_manager:
+                    event = TurnEvent(
+                        type="metadata_start",
+                        call_id=self._call_id,
+                        customer_number=self.config.customer_number or "unknown",
+                        agent_id=self.config.agent_id or "unknown",
+                    )
+                    await self._ws_manager.send(event)
+                
+                # Reset timer
+                self._last_audio_time = time.time()

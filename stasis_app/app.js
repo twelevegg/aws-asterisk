@@ -12,6 +12,7 @@
 
 const AriClient = require('ari-client');
 const { v4: uuidv4 } = require('uuid');
+const http = require('http');
 
 // Configuration (matches config/ari.conf)
 const ARI_URL = 'http://127.0.0.1:8088/ari';
@@ -250,6 +251,15 @@ async function main() {
             console.log('\n' + '='.repeat(60));
             console.log(`[${callId}] Incoming call from: ${callerNumber}`);
             console.log(`[${callId}] Caller host: ${callerHost}`);
+
+            // [NEW] Trigger Popup immediately (Ringing state)
+            sendBroadcast({
+                type: "CALL_STARTED",
+                callId: callId,
+                customer_number: callerNumber,
+                customer_info: { name: "수신 중...", rate_plan: "확인 중..." }
+            });
+
             console.log(`[${callId}] Customer channel: ${channel.id}`);
             console.log('='.repeat(60));
 
@@ -310,7 +320,7 @@ async function main() {
                         portPool.release(ports);
                         try {
                             await channel.stopMoh();
-                        } catch (e) {}
+                        } catch (e) { }
                         await channel.hangup();
                         return;
                     }
@@ -556,6 +566,31 @@ async function cleanup(client, callData) {
     activeCalls.delete(callData.customerChannel);
     activeCalls.delete(callData.agentChannel);
     console.log(`[${callId}] Cleanup complete`);
+}
+
+function sendBroadcast(payload) {
+    const data = JSON.stringify(payload);
+    const options = {
+        hostname: '127.0.0.1',
+        port: 8000,
+        path: '/ai/api/v1/agent/broadcast',
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(data)
+        }
+    };
+
+    const req = http.request(options, (res) => {
+        // console.log(`[Broadcast] Status: ${res.statusCode}`);
+    });
+
+    req.on('error', (e) => {
+        // console.error(`[Broadcast] Error: ${e.message}`); // Ignore connection errors if server down
+    });
+
+    req.write(data);
+    req.end();
 }
 
 // Graceful shutdown

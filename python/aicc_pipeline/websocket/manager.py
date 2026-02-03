@@ -148,11 +148,26 @@ class WebSocketManager:
 
             ws = await websockets.connect(url, **connect_kwargs)
             self._connections[url] = ws
+            
+            # [FIX] Start receive loop to prevent buffer overflow
+            asyncio.create_task(self._recv_loop(ws, url))
+            
             logger.info(f"Connected: {url}")
             return True
         except Exception as e:
             logger.warning(f"Connection failed: {url} - {e}")
             return False
+
+    async def _recv_loop(self, ws: Any, url: str): # [NEW]
+        """Consume incoming messages to prevent buffer overflow."""
+        try:
+            # websockets connection acts as an async iterator
+            async for msg in ws:
+                # We simply consume/discard the message to keep the buffer clean
+                # If we need to handle server commands (e.g. stop), do it here.
+                pass
+        except Exception as e:
+            logger.debug(f"Recv loop finished for {url}: {e}")
 
     async def _reconnect_loop(self, url: str):
         """
