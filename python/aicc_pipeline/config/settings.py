@@ -115,10 +115,10 @@ class PipelineConfig:
 
     # VAD settings
     vad_threshold: float = field(
-        default_factory=lambda: float(os.getenv("AICC_VAD_THRESHOLD", "0.6"))
+        default_factory=lambda: float(os.getenv("AICC_VAD_THRESHOLD", "0.45"))
     )
     min_speech_ms: float = field(
-        default_factory=lambda: float(os.getenv("AICC_MIN_SPEECH_MS", "250.0"))
+        default_factory=lambda: float(os.getenv("AICC_MIN_SPEECH_MS", "300.0"))
     )
     min_silence_ms: float = field(
         default_factory=lambda: float(os.getenv("AICC_MIN_SILENCE_MS", "800.0"))
@@ -168,10 +168,15 @@ class PipelineConfig:
         default_factory=lambda: float(os.getenv("AICC_STT_ROTATION_SEC", "270"))
     )
     turn_boundary_min_silence_ms: float = field(
-        default_factory=lambda: float(os.getenv("AICC_TURN_MIN_SILENCE_MS", "500"))
+        default_factory=lambda: float(os.getenv("AICC_TURN_MIN_SILENCE_MS", "800"))
     )
     turn_boundary_min_chars: int = field(
         default_factory=lambda: int(os.getenv("AICC_TURN_MIN_CHARS", "1"))
+    )
+
+    # STT audio queue settings
+    stt_audio_queue_maxsize: int = field(
+        default_factory=lambda: int(os.getenv("AICC_STT_AUDIO_QUEUE_MAXSIZE", "300"))
     )
 
     # Debug
