@@ -26,13 +26,11 @@ logger = logging.getLogger("aicc.pipeline")
 
 def _safe_task(coro, name: str = "task"):
     """Create an asyncio task with error handling."""
-
     async def wrapper():
         try:
             return await coro
         except Exception as e:
             logger.error(f"Async task '{name}' failed: {e}")
-
     return asyncio.create_task(wrapper())
 
 
@@ -46,7 +44,6 @@ from .udp_receiver import UDPReceiver
 @dataclass
 class TurnEvent:
     """Turn event for WebSocket transmission."""
-
     type: str
     call_id: str
     speaker: str = ""
@@ -73,7 +70,7 @@ class TurnEvent:
         result: Dict[str, object] = {
             "type": self.type,
             "call_id": self.call_id,
-            "timestamp": self.timestamp,
+            "timestamp": self.timestamp
         }
 
         if self.type == "metadata_start":
@@ -103,15 +100,13 @@ class SpeakerProcessor:
         self,
         speaker: str,
         config: PipelineConfig,
-        on_turn: Callable[[TurnEvent], object],
+        on_turn: Callable[[TurnEvent], None],
         call_id: str,
-        loop: asyncio.AbstractEventLoop,
     ):
         self.speaker = speaker
         self.config = config
         self.on_turn = on_turn
         self.call_id = call_id
-        self._loop = loop
 
         # VAD
         self._vad: BaseVAD = create_vad(
@@ -127,11 +122,6 @@ class SpeakerProcessor:
             language=config.stt_language,
             sample_rate=config.target_sample_rate,
         )
-        self._stt_queue: asyncio.Queue[bytes] = asyncio.Queue(
-            maxsize=config.stt_audio_queue_maxsize
-        )
-        self._stt_worker: Optional[asyncio.Task] = None
-        self._stt_dropped = 0
 
         # Turn detector for morpheme analysis
         self._turn_detector = TurnDetector(
@@ -174,9 +164,8 @@ class SpeakerProcessor:
     def _process_vad_state(self, is_speech: bool, audio_bytes: bytes):
         """Process VAD state and detect turns."""
         min_silence_frames = int(
-            self.config.min_silence_ms
-            * self.config.target_sample_rate
-            / (self._vad.window_size * 1000)
+            self.config.min_silence_ms * self.config.target_sample_rate /
+            (self._vad.window_size * 1000)
         )
 
         if is_speech:
@@ -185,12 +174,10 @@ class SpeakerProcessor:
             if not self._is_speaking:
                 self._is_speaking = True
                 self._speech_start_time = self._current_time
-                logger.info(
-                    f"[{self.speaker}] Speech START at {self._current_time:.2f}s"
-                )
+                logger.info(f"[{self.speaker}] Speech START at {self._current_time:.2f}s")
 
             # Buffer audio for batch STT
-            self._enqueue_audio(audio_bytes)
+            self._stt.add_audio(audio_bytes)
         else:
             if self._is_speaking:
                 self._silence_frames += 1
@@ -204,9 +191,7 @@ class SpeakerProcessor:
             return
 
         end_time = self._current_time - (
-            self._silence_frames
-            * self._vad.window_size
-            / self.config.target_sample_rate
+            self._silence_frames * self._vad.window_size / self.config.target_sample_rate
         )
         duration = end_time - self._speech_start_time
 
@@ -224,15 +209,13 @@ class SpeakerProcessor:
             return
 
         # Calculate silence duration in ms
-        silence_ms = (
-            self._silence_frames
-            * (self._vad.window_size / self.config.target_sample_rate)
-            * 1000
-        )
+        silence_ms = self._silence_frames * (self._vad.window_size / self.config.target_sample_rate) * 1000
 
         # Use TurnDetector for morpheme analysis
         turn_result = self._turn_detector.detect(
-            transcript=transcript, duration=duration, silence_duration_ms=silence_ms
+            transcript=transcript,
+            duration=duration,
+            silence_duration_ms=silence_ms
         )
 
         if len(transcript) > 50:
@@ -277,25 +260,6 @@ class SpeakerProcessor:
         self._silence_frames = 0
         self._stt.clear()
 
-    async def start(self):
-        if self._stt_worker is None:
-            self._stt_worker = self._loop.create_task(self._stt_feed_worker())
-
-    def _enqueue_audio(self, audio_bytes: bytes):
-        try:
-            self._stt_queue.put_nowait(audio_bytes)
-        except asyncio.QueueFull:
-            self._stt_dropped += 1
-            if self._stt_dropped <= 5 or self._stt_dropped % 100 == 0:
-                logger.warning(
-                    f"[{self.speaker}] STT audio queue full, dropped={self._stt_dropped}"
-                )
-
-    async def _stt_feed_worker(self):
-        while True:
-            audio_bytes = await self._stt_queue.get()
-            self._stt.add_audio(audio_bytes)
-
     def get_stats(self) -> dict:
         """Get processing stats."""
         return {
@@ -312,13 +276,6 @@ class SpeakerProcessor:
         if self._is_speaking and self._speech_start_time is not None:
             logger.info(f"[{self.speaker}] Flushing pending turn on shutdown")
             self._finalize_turn()
-
-        if self._stt_worker:
-            self._stt_worker.cancel()
-            try:
-                await self._stt_worker
-            except asyncio.CancelledError:
-                pass
 
 
 class AICCPipeline:
@@ -361,7 +318,9 @@ class AICCPipeline:
             _safe_task(self._ws_manager.send(event), "send_metadata_start_delayed")
 
         processor = (
-            self._customer_processor if speaker == "customer" else self._agent_processor
+            self._customer_processor
+            if speaker == "customer"
+            else self._agent_processor
         )
         if processor:
             processor.process_audio(pcm_bytes)
@@ -409,13 +368,11 @@ class AICCPipeline:
             await self._ws_manager.start()
 
         # Initialize processors
-        loop = asyncio.get_running_loop()
         self._customer_processor = SpeakerProcessor(
             speaker="customer",
             config=self.config,
             on_turn=lambda e: _safe_task(self._on_turn(e), "customer_turn"),
             call_id=self._call_id,
-            loop=loop,
         )
 
         self._agent_processor = SpeakerProcessor(
@@ -423,12 +380,6 @@ class AICCPipeline:
             config=self.config,
             on_turn=lambda e: _safe_task(self._on_turn(e), "agent_turn"),
             call_id=self._call_id,
-            loop=loop,
-        )
-
-        await asyncio.gather(
-            self._customer_processor.start(),
-            self._agent_processor.start(),
         )
 
         # Initialize UDP receivers
@@ -466,33 +417,25 @@ class AICCPipeline:
             total_duration = time.time() - self._start_time
 
             customer_stats = (
-                self._customer_processor.get_stats() if self._customer_processor else {}
+                self._customer_processor.get_stats()
+                if self._customer_processor else {}
             )
             agent_stats = (
-                self._agent_processor.get_stats() if self._agent_processor else {}
+                self._agent_processor.get_stats()
+                if self._agent_processor else {}
             )
 
-            total_turns = customer_stats.get("turn_count", 0) + agent_stats.get(
-                "turn_count", 0
-            )
-            total_complete = customer_stats.get("complete_turns", 0) + agent_stats.get(
-                "complete_turns", 0
-            )
-            total_incomplete = customer_stats.get(
-                "incomplete_turns", 0
-            ) + agent_stats.get("incomplete_turns", 0)
-            total_speech = customer_stats.get("total_speech_time", 0) + agent_stats.get(
-                "total_speech_time", 0
-            )
+            total_turns = customer_stats.get("turn_count", 0) + agent_stats.get("turn_count", 0)
+            total_complete = customer_stats.get("complete_turns", 0) + agent_stats.get("complete_turns", 0)
+            total_incomplete = customer_stats.get("incomplete_turns", 0) + agent_stats.get("incomplete_turns", 0)
+            total_speech = customer_stats.get("total_speech_time", 0) + agent_stats.get("total_speech_time", 0)
 
             event = TurnEvent(
                 type="metadata_end",
                 call_id=self._call_id,
                 total_duration=round(total_duration, 2),
                 turn_count=total_turns,
-                speech_ratio=round(total_speech / total_duration, 3)
-                if total_duration > 0
-                else 0,
+                speech_ratio=round(total_speech / total_duration, 3) if total_duration > 0 else 0,
                 complete_turns=total_complete,
                 incomplete_turns=total_incomplete,
             )
