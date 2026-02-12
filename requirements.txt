@@ -18,6 +18,7 @@ google-cloud-speech>=2.21.0
 
 # Audio processing
 pydub>=0.25.1
+scipy>=1.11.0
 
 # Optional: Silero VAD via Pipecat (higher accuracy than energy-based VAD)
 # Uncomment if you want to use Silero VAD:
